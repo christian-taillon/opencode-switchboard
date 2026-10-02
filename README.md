@@ -14,7 +14,7 @@ The plugin exposes two OpenCode tools:
 - `switchboard_harnesses`: discover configured harnesses and whether their executables are on `PATH`.
 - `switchboard_delegate`: run one bounded harness task synchronously and return a normalized terminal result.
 
-It also registers the `switchboard` skill and, by default, appends a short Switchboard-awareness instruction to agents named `autopilot` and `orchestrator` when those agents exist.
+It also registers the `switchboard` skill. Agent prompt awareness is opt-in through `awareAgents`; Switchboard does not assume any agent names or external OpenCode configuration.
 
 ## Why
 
@@ -50,6 +50,17 @@ Clone the repository into an OpenCode plugin directory and install its package d
 git clone git@github.com:christian-taillon/opencode-switchboard.git \
   ~/.config/opencode/plugins/switchboard
 cd ~/.config/opencode/plugins/switchboard
+```
+
+Then install with your preferred Node package manager. For example:
+
+```bash
+pnpm install --prod --ignore-scripts
+```
+
+or:
+
+```bash
 npm install --omit=dev --ignore-scripts
 ```
 
@@ -65,13 +76,20 @@ Then start or reload OpenCode. The selected agent can load the `switchboard` ski
 
 ## Agent integration
 
-Switchboard is designed to fit the delegation rules in [`christian-taillon/opencode-agents`](https://github.com/christian-taillon/opencode-agents).
+Switchboard does not require specific agent definitions. By default, `awareAgents` is `[]`, so installation registers the skill and tools without modifying any agent system prompt.
 
-By default, plugin setup looks for agents named `autopilot` and `orchestrator`. If present, it appends this awareness without replacing their existing system prompt:
+Agents using deny-by-default OpenCode 2 permission rules must explicitly allow the registered Switchboard tool actions:
 
-> External coding harnesses are available through Switchboard. When another harness would materially help, load the `switchboard` skill and follow its delegation, foreground, and external-session discipline. Treat Switchboard workers as bounded external subagents whose output must be inspected before acceptance.
+```yaml
+- action: switchboard_harnesses
+  resource: "*"
+  effect: allow
+- action: switchboard_delegate
+  resource: "*"
+  effect: allow
+```
 
-The full behavior stays in the skill rather than inflating those agents' system prompts.
+If an agent already contains Switchboard routing guidance, no `awareAgents` configuration is needed. For a custom agent that lacks that awareness, add its ID to `awareAgents`; Switchboard will append a short instruction telling it to load the `switchboard` skill when external harness delegation would materially help.
 
 The `switchboard` skill tells agents to:
 
@@ -83,7 +101,7 @@ The `switchboard` skill tells agents to:
 - avoid overlapping mutating delegates in the same working directory;
 - inspect important diffs and validation evidence before accepting a worker's claims.
 
-This matches the way `autopilot` and `orchestrator` already reason about native OpenCode child sessions without pretending the external process is an actual OpenCode session.
+This keeps Switchboard standalone while allowing any OpenCode agent set to opt into the capability.
 
 ## Delegation modes
 
@@ -194,6 +212,8 @@ Switchboard deliberately uses direct process spawning rather than a shell:
 - required work is always foreground in v0.0.1;
 - overlapping mutating delegates to the same working directory are rejected.
 
+External harnesses are a separate execution and security boundary. Switchboard spawns the vendor CLI directly, so OpenCode shell hooks, shell-command permission wrappers, Git identity guards, and other behavior attached specifically to OpenCode's own shell tool do not automatically apply to commands an external harness executes. Configure each vendor harness, its permissions, and its Git identity independently.
+
 A custom `workingDirectory` must resolve inside the OpenCode project root. This prevents a delegated tool call from silently switching Switchboard to an unrelated checkout.
 
 ## Configuration
@@ -206,7 +226,7 @@ Defaults:
     {
       "package": "/home/you/.config/opencode/plugins/switchboard",
       "options": {
-        "awareAgents": ["autopilot", "orchestrator"],
+        "awareAgents": [],
         "defaultTimeoutSeconds": 900,
         "maxTimeoutSeconds": 3600,
         "maxOutputBytes": 8388608,
@@ -226,7 +246,7 @@ The `package` path above is only needed when you configure Switchboard explicitl
 
 `command` is an executable name or path, not a shell command string. Use it when a CLI is installed outside normal `PATH` discovery.
 
-Set `awareAgents` to `[]` if you want the skill and tools registered without modifying any agent system prompt.
+Set `awareAgents` to one or more agent IDs only when you want Switchboard to append its short awareness instruction to those agents. The default is `[]`.
 
 ## Harness prerequisites
 
@@ -245,9 +265,11 @@ The other supported commands expected by v0.0.1 are `claude`, `gemini`, and `cod
 The execution core is dependency-free so it can be tested with Node's built-in test runner. The only runtime package dependency is the OpenCode plugin API.
 
 ```bash
-npm test
-npm run check
+pnpm test
+pnpm run check
 ```
+
+The equivalent npm commands are `npm test` and `npm run check`.
 
 Source layout:
 
@@ -271,3 +293,4 @@ skills/
 - Only one mutating Switchboard delegation may run in a given working directory at a time.
 - Codex resume and per-delegation model override are disabled.
 - Harness CLI flags can change upstream. Switchboard keeps those differences inside adapters so they can be updated without changing the OpenCode-facing tool contract.
+- The package currently pins `@opencode/plugin` `2.0.4`. Validate plugin loading against the OpenCode 2 build you run with `opencode plugin list` before relying on Switchboard.

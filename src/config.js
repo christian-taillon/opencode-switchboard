@@ -1,5 +1,5 @@
 export const DEFAULTS = Object.freeze({
-  awareAgents: ["autopilot", "orchestrator"],
+  awareAgents: [],
   defaultTimeoutSeconds: 900,
   maxTimeoutSeconds: 3600,
   maxOutputBytes: 8 * 1024 * 1024,

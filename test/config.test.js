@@ -2,6 +2,10 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { normalizeOptions, resolveTimeoutSeconds } from "../src/config.js"
 
+test("does not assume agent names by default", () => {
+  assert.deepEqual(normalizeOptions().awareAgents, [])
+})
+
 test("normalizes defaults and clamps requested timeout", () => {
   const options = normalizeOptions({
     defaultTimeoutSeconds: 20,
