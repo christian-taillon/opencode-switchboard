@@ -142,7 +142,7 @@ function codex({ prompt, mode, sessionID, model }) {
   if (model) {
     throw new Error("Codex model override is not enabled in Switchboard v0.0.1")
   }
-  const args = ["exec", "--json"]
+  const args = ["exec", "--json", "--skip-git-repo-check"]
   if (mode !== "plan") args.push("--full-auto")
   args.push(prompt)
   return args

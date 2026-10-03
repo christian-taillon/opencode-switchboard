@@ -51,7 +51,7 @@ export default Plugin.define({
         name: "Switchboard",
         description:
           "Delegate bounded coding, investigation, or review work to external CLI harnesses while keeping OpenCode as the parent control plane.",
-        location: SKILL_LOCATION,
+        path: SKILL_LOCATION,
         content: withoutFrontmatter(skillMarkdown),
         autoinvoke: true,
       })

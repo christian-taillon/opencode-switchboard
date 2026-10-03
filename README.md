@@ -124,6 +124,8 @@ Mode mapping in v0.0.1:
 | Gemini CLI | `--approval-mode plan` | `--approval-mode auto_edit` | `--approval-mode yolo` |
 | Codex CLI | normal restricted `codex exec` | `codex exec --full-auto` | `codex exec --full-auto` |
 
+Codex invocations include `--skip-git-repo-check` so delegation also works in non-Git projects. This does not change Codex's sandbox or approval settings.
+
 ## Sessions
 
 Antigravity, Claude Code, and Gemini CLI expose resumable external sessions. Switchboard normalizes the returned identifier as `sessionID`.

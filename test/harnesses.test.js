@@ -75,14 +75,20 @@ test("Gemini maps edit mode to auto_edit", () => {
   ])
 })
 
-test("Codex uses full-auto for mutating execution and rejects resume", () => {
+test("Codex permits non-Git workspaces, uses full-auto only for mutation, and rejects resume", () => {
   const harness = getHarness("codex", options)
-  const invocation = buildInvocation(harness, {
-    prompt: "implement",
-    mode: "edit",
-    timeoutSeconds: 60,
-  })
-  assert.deepEqual(invocation.args, ["exec", "--json", "--full-auto", "implement"])
+  for (const mode of ["plan", "edit", "full"]) {
+    const invocation = buildInvocation(harness, {
+      prompt: "implement",
+      mode,
+      timeoutSeconds: 60,
+    })
+    assert.deepEqual(invocation.args, [
+      "exec", "--json", "--skip-git-repo-check",
+      ...(mode === "plan" ? [] : ["--full-auto"]),
+      "implement",
+    ])
+  }
 
   assert.throws(
     () =>
