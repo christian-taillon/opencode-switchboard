@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add an optional Claude-native OpenCode profile with a thin `claude-code` subagent adapter and `/claude` background command.
+- Keep the existing generic Switchboard tools unchanged; the native profile has its own install/uninstall path and can install the backend when absent.
+- Add tests that lock the wrapper to Switchboard-only capabilities and native OpenCode subagent/command semantics.
+
+
 ## 0.0.1 - 2026-10-02
 
 Initial Linux-first release.

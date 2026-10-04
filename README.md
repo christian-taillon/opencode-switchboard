@@ -74,6 +74,16 @@ opencode plugin list
 
 Then start or reload OpenCode. The selected agent can load the `switchboard` skill and call the Switchboard tools.
 
+### Optional Claude-native profile
+
+The generic plugin remains the default and requires no agent definitions. If you want Claude Code to look like a normal OpenCode subagent instead of an external-tool call, install the optional profile:
+
+```bash
+./integrations/claude-native/install.sh
+```
+
+This adds a `claude-code` OpenCode subagent plus a `/claude` background command while keeping the existing `switchboard_delegate` interface unchanged. The profile is independently deployable and does not depend on `opencode-agents` or `rcfiles`; if the Switchboard backend is missing, its installer installs the backend from this checkout. See `integrations/claude-native/README.md` for routing and uninstall details.
+
 ## Agent integration
 
 Switchboard does not require specific agent definitions. By default, `awareAgents` is `[]`, so installation registers the skill and tools without modifying any agent system prompt.
@@ -286,6 +296,8 @@ src/
 skills/
   switchboard/
     SKILL.md      agent delegation discipline
+integrations/
+  claude-native/  optional native-feeling Claude subagent and /claude command
 ```
 
 ## v0.0.1 limitations
