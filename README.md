@@ -74,15 +74,25 @@ opencode plugin list
 
 Then start or reload OpenCode. The selected agent can load the `switchboard` skill and call the Switchboard tools.
 
-### Optional Claude-native profile
+### Optional native subagent profiles
 
-The generic plugin remains the default and requires no agent definitions. If you want Claude Code to look like a normal OpenCode subagent instead of an external-tool call, install the optional profile:
+The generic plugin remains the default and requires no agent definitions. Optional profiles expose selected external harnesses as normal OpenCode subagents while keeping the backend tools unchanged.
+
+For Claude Code:
 
 ```bash
 ./integrations/claude-native/install.sh
 ```
 
-This adds a `claude-code` OpenCode subagent plus a `/claude` background command while keeping the existing `switchboard_delegate` interface unchanged. The profile is independently deployable and does not depend on `opencode-agents` or `rcfiles`; if the Switchboard backend is missing, its installer installs the backend from this checkout. See `integrations/claude-native/README.md` for routing and uninstall details.
+This adds a `claude-code` OpenCode subagent plus a `/claude` background command while keeping the existing `switchboard_delegate` interface unchanged. The profile is independently deployable and does not depend on `opencode-agents` or `rcfiles`; if the Switchboard backend is missing, its installer installs the backend from this checkout.
+
+For Google Antigravity as a subagent only:
+
+```bash
+./integrations/antigravity-native/install.sh
+```
+
+This installs only the `antigravity` OpenCode subagent. It adds no command and no routing policy. See the profile READMEs for install and uninstall details.
 
 ## Agent integration
 
@@ -297,7 +307,8 @@ skills/
   switchboard/
     SKILL.md      agent delegation discipline
 integrations/
-  claude-native/  optional native-feeling Claude subagent and /claude command
+  claude-native/       optional Claude subagent and /claude command
+  antigravity-native/  optional Antigravity subagent only
 ```
 
 ## v0.0.1 limitations

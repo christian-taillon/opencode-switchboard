@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add an optional Claude-native OpenCode profile with a thin `claude-code` subagent adapter and `/claude` background command.
+- Add an independently installable Antigravity-native profile that exposes `agy` as the `antigravity` OpenCode subagent without adding commands or routing policy.
 - Keep the existing generic Switchboard tools unchanged; the native profile has its own install/uninstall path and can install the backend when absent.
 - Add tests that lock the wrapper to Switchboard-only capabilities and native OpenCode subagent/command semantics.
 
