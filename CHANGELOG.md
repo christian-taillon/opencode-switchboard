@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Map Claude Code `full` mode to `--permission-mode auto` instead of `bypassPermissions`.
+- Pass empty Claude commit/PR attribution via `--settings` so delegated commits never carry Claude co-author trailers.
 - Add an optional Claude-native OpenCode profile with a thin `claude-code` subagent adapter and `/claude` background command.
 - Add an independently installable Antigravity-native profile that exposes `agy` as the `antigravity` OpenCode subagent without adding commands or routing policy.
 - Keep the existing generic Switchboard tools unchanged; the native profile has its own install/uninstall path and can install the backend when absent.

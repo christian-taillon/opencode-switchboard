@@ -119,9 +119,13 @@ function antigravity({ prompt, mode, sessionID, model, timeoutSeconds }) {
   return args
 }
 
+// Claude Code adds Co-Authored-By trailers and PR footers unless user settings
+// disable them; enforce that here so delegated commits never carry attribution.
+const CLAUDE_SETTINGS = JSON.stringify({ attribution: { commit: "", pr: "" } })
+
 function claude({ prompt, mode, sessionID, model }) {
-  const permission = mode === "plan" ? "plan" : mode === "full" ? "bypassPermissions" : "acceptEdits"
-  const args = ["-p", prompt, "--output-format", "json", "--permission-mode", permission]
+  const permission = mode === "plan" ? "plan" : mode === "full" ? "auto" : "acceptEdits"
+  const args = ["-p", prompt, "--output-format", "json", "--permission-mode", permission, "--settings", CLAUDE_SETTINGS]
   if (sessionID) args.push("--resume", sessionID)
   if (model) args.push("--model", model)
   return args

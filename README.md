@@ -140,9 +140,11 @@ Mode mapping in v0.0.1:
 | Harness | `plan` | `edit` | `full` |
 | --- | --- | --- | --- |
 | Antigravity | `--mode=plan` | `--mode=accept-edits` | accept edits + `--dangerously-skip-permissions` |
-| Claude Code | `--permission-mode plan` | `--permission-mode acceptEdits` | `--permission-mode bypassPermissions` |
+| Claude Code | `--permission-mode plan` | `--permission-mode acceptEdits` | `--permission-mode auto` |
 | Gemini CLI | `--approval-mode plan` | `--approval-mode auto_edit` | `--approval-mode yolo` |
 | Codex CLI | normal restricted `codex exec` | `codex exec --full-auto` | `codex exec --full-auto` |
+
+Claude Code `full` uses auto mode rather than `bypassPermissions`, so Claude's own safety classifier, permission rules, and sandbox stay active. Every Claude invocation also passes `--settings` with empty commit and PR attribution, so delegated commits never carry a Claude `Co-Authored-By` trailer regardless of the user's Claude settings.
 
 Codex invocations include `--skip-git-repo-check` so delegation also works in non-Git projects. This does not change Codex's sandbox or approval settings.
 

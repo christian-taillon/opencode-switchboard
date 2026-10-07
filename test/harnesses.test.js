@@ -53,9 +53,23 @@ test("Claude maps modes and session resume", () => {
     "json",
     "--permission-mode",
     "plan",
+    "--settings",
+    '{"attribution":{"commit":"","pr":""}}',
     "--resume",
     "claude-session",
   ])
+})
+
+test("Claude full mode uses auto permissions, not bypass", () => {
+  const harness = getHarness("claude", options)
+  const invocation = buildInvocation(harness, {
+    prompt: "implement",
+    mode: "full",
+    timeoutSeconds: 60,
+  })
+  const index = invocation.args.indexOf("--permission-mode")
+  assert.equal(invocation.args[index + 1], "auto")
+  assert.ok(!invocation.args.includes("bypassPermissions"))
 })
 
 test("Gemini maps edit mode to auto_edit", () => {
