@@ -20,6 +20,8 @@ test("runProcess captures stdout, stderr, exit code, and duration", async () => 
   assert.equal(result.stdout.trim(), "hello")
   assert.equal(result.stderr.trim(), "note")
   assert.equal(result.outputTruncated, false)
+  assert.equal(result.stdoutTruncated, false)
+  assert.equal(result.stderrTruncated, false)
   assert.ok(result.durationMs >= 0)
 })
 
@@ -34,6 +36,21 @@ test("runProcess drains output but caps retained bytes", async () => {
 
   assert.equal(result.status, "completed")
   assert.equal(Buffer.byteLength(result.stdout), 128)
+  assert.equal(result.outputTruncated, true)
+  assert.equal(result.stdoutTruncated, true)
+  assert.equal(result.stderrTruncated, false)
+})
+
+test("stderr truncation is separate from terminal stdout truncation", async () => {
+  const result = await runProcess({
+    command: process.execPath,
+    args: ["-e", "console.log('done'); console.error('x'.repeat(4096))"],
+    cwd: process.cwd(),
+    timeoutMs: 2000,
+    maxOutputBytes: 128,
+  })
+  assert.equal(result.stdoutTruncated, false)
+  assert.equal(result.stderrTruncated, true)
   assert.equal(result.outputTruncated, true)
 })
 

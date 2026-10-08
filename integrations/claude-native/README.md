@@ -6,6 +6,7 @@ This optional profile makes Claude Code feel like a normal OpenCode subagent whi
 
 ```text
 ~/.config/opencode/agents/claude-code.md
+~/.config/opencode/agents/claude.md
 ~/.config/opencode/commands/claude.md
 ```
 
@@ -32,8 +33,10 @@ The OpenCode child session is the identity the parent manages. The wrapper retai
 ## Manual use
 
 ```text
-@claude-code implement the parser cleanup and run the focused tests
+@claude implement the parser cleanup and run the focused tests
 ```
+
+`@claude-code` remains available for existing callers. Both profiles are installed from the same template.
 
 Or use the convenience command:
 
@@ -48,6 +51,9 @@ Or use the convenience command:
 A deny-by-default parent agent must explicitly allow this child ID:
 
 ```yaml
+- action: subagent
+  resource: claude
+  effect: allow
 - action: subagent
   resource: claude-code
   effect: allow
@@ -81,7 +87,7 @@ opencode plugin list
 
 ## Uninstall
 
-Remove only the native wrapper and command:
+Remove both native wrapper names and the command:
 
 ```bash
 ./integrations/claude-native/uninstall.sh

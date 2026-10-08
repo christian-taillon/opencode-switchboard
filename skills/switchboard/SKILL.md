@@ -18,6 +18,7 @@ Treat a Switchboard harness as a bounded external worker, close to an OpenCode s
 3. Send a self-contained task. Include the objective, relevant files or symbols, constraints and non-goals, acceptance criteria, validation to run, dirty-tree boundary, and commit/push authority.
 4. Prefer one cohesive delegation over a chain of tiny prompts.
 5. Use `mode: plan` for read-only investigation or review, `mode: edit` for file edits with conservative harness permissions, and `mode: full` only when the bounded task requires non-interactive command execution and the parent has authority for that work.
+6. The parent may select harness-native `model` and `effort`. For native wrapper agents, put `externalModel` and `externalEffort` in the task prompt; the OpenCode subagent tool's `model` selects only the wrapper. Explicit parent selections override the wrapper's task-based defaults. Retain and resend the selected pair on same-task resume; report unavailable selections without silent fallback. Requested settings are not verified resolved settings.
 
 ## Foreground and sessions
 

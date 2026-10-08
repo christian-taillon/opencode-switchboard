@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Use GPT-6.1 Sol high for native wrappers, with parent-overridable, task-based external model/effort policies and explicit selector retention on resume.
+- Forward Antigravity and Claude reasoning effort and report requested selectors; reject unsupported effort selections instead of ignoring them.
+- Fail Antigravity delegations on headless tool denials or invalid/blank terminal results even when the CLI exits `0`; preserve denied actions and protocol evidence.
+- Track stdout/stderr truncation separately and reject truncated terminal output.
+- Make the Antigravity native profile callable through Code Mode and prohibit permission-failure escalation; document scoped headless URL grants.
+- Expose Claude Code as `@claude` while retaining `@claude-code` and `/claude`; make both native profiles callable through Code Mode.
 - Map Claude Code `full` mode to `--permission-mode auto` instead of `bypassPermissions`.
 - Pass empty Claude commit/PR attribution via `--settings` so delegated commits never carry Claude co-author trailers.
 - Add an optional Claude-native OpenCode profile with a thin `claude-code` subagent adapter and `/claude` background command.

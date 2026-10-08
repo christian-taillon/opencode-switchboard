@@ -90,6 +90,8 @@ export async function runProcess({
         ...result,
         stdout: render(stdout),
         stderr: render(stderr),
+        stdoutTruncated: stdout.truncated,
+        stderrTruncated: stderr.truncated,
         outputTruncated: stdout.truncated || stderr.truncated,
         durationMs: Date.now() - started,
       })

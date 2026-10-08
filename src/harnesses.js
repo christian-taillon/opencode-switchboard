@@ -23,15 +23,34 @@ function firstString(...values) {
 
 function parseAntigravity(stdout) {
   const value = jsonObject(stdout.trim())
-  if (!value) return { response: stdout.trim() }
-  return {
-    response: firstString(value.response, value.result, value.message),
+  if (!value || Array.isArray(value)) {
+    return {
+      protocolError: "Antigravity returned invalid JSON; expected a terminal result object",
+      rawOutput: stdout,
+    }
+  }
+  const deniedActions = Array.isArray(value.denied_actions) && value.denied_actions.length > 0
+    ? value.denied_actions : undefined
+  const result = {
+    response: typeof value.response === "string" ? value.response : undefined,
     sessionID: firstString(value.conversation_id, value.conversationId, value.session_id),
     usage: value.usage,
     providerStatus: value.status,
-    providerFailed: typeof value.status === "string" && value.status !== "SUCCESS",
+    providerFailed: value.status !== "SUCCESS" || Boolean(value.error) || Boolean(deniedActions),
     error: firstString(value.error?.message, value.error),
+    deniedActions,
   }
+  if (deniedActions && !result.error) {
+    const actions = deniedActions.map((entry) => firstString(entry?.action) ?? "unknown").join(", ")
+    result.error = `Antigravity tools were denied in headless mode: ${actions}. Configure scoped permissions.allow rules in Antigravity settings before retrying.`
+  }
+  let protocolError
+  if (typeof value.status !== "string") {
+    protocolError = "Antigravity result is missing its terminal status"
+  } else if (value.status === "SUCCESS" && !result.response?.trim()) {
+    protocolError = "Antigravity success result is missing a nonempty response"
+  }
+  return protocolError ? { ...result, protocolError, rawOutput: stdout } : result
 }
 
 function parseClaude(stdout) {
@@ -108,7 +127,16 @@ function parseCodex(stdout) {
   }
 }
 
-function antigravity({ prompt, mode, sessionID, model, timeoutSeconds }) {
+function effortArgs(effort) {
+  if (effort === undefined) return []
+  const levels = ["low", "medium", "high", "xhigh", "max"]
+  if (!levels.includes(effort)) {
+    throw new Error(`unsupported effort: ${effort}; expected ${levels.join(", ")}`)
+  }
+  return ["--effort", effort]
+}
+
+function antigravity({ prompt, mode, sessionID, model, effort, timeoutSeconds }) {
   const printTimeoutSeconds = Math.max(1, timeoutSeconds - 2)
   const args = ["-p", prompt, "--output-format", "json", "--print-timeout", `${printTimeoutSeconds}s`]
   if (mode === "plan") args.push("--mode=plan")
@@ -116,6 +144,7 @@ function antigravity({ prompt, mode, sessionID, model, timeoutSeconds }) {
   if (mode === "full") args.push("--mode=accept-edits", "--dangerously-skip-permissions")
   if (sessionID) args.push("--conversation", sessionID)
   if (model) args.push("--model", model)
+  args.push(...effortArgs(effort))
   return args
 }
 
@@ -123,15 +152,17 @@ function antigravity({ prompt, mode, sessionID, model, timeoutSeconds }) {
 // disable them; enforce that here so delegated commits never carry attribution.
 const CLAUDE_SETTINGS = JSON.stringify({ attribution: { commit: "", pr: "" } })
 
-function claude({ prompt, mode, sessionID, model }) {
+function claude({ prompt, mode, sessionID, model, effort }) {
   const permission = mode === "plan" ? "plan" : mode === "full" ? "auto" : "acceptEdits"
   const args = ["-p", prompt, "--output-format", "json", "--permission-mode", permission, "--settings", CLAUDE_SETTINGS]
   if (sessionID) args.push("--resume", sessionID)
   if (model) args.push("--model", model)
+  args.push(...effortArgs(effort))
   return args
 }
 
-function gemini({ prompt, mode, sessionID, model }) {
+function gemini({ prompt, mode, sessionID, model, effort }) {
+  if (effort !== undefined) throw new Error("Gemini CLI effort selection is not supported")
   const approval = mode === "plan" ? "plan" : mode === "full" ? "yolo" : "auto_edit"
   const args = ["-p", prompt, "--output-format", "json", "--approval-mode", approval]
   if (sessionID) args.push("--resume", sessionID)
@@ -139,12 +170,15 @@ function gemini({ prompt, mode, sessionID, model }) {
   return args
 }
 
-function codex({ prompt, mode, sessionID, model }) {
+function codex({ prompt, mode, sessionID, model, effort }) {
   if (sessionID) {
     throw new Error("Codex session resume is not enabled in Switchboard v0.0.1")
   }
   if (model) {
     throw new Error("Codex model override is not enabled in Switchboard v0.0.1")
+  }
+  if (effort !== undefined) {
+    throw new Error("Codex effort selection is not enabled in Switchboard v0.0.1")
   }
   const args = ["exec", "--json", "--skip-git-repo-check"]
   if (mode !== "plan") args.push("--full-auto")
@@ -212,8 +246,15 @@ export function buildInvocation(harness, input) {
   }
 }
 
-export function parseHarnessOutput(harness, stdout) {
-  return harness.parse(stdout)
+export function parseHarnessOutput(harness, stdout, { truncated = false } = {}) {
+  const result = harness.parse(stdout)
+  return truncated
+    ? {
+      ...result,
+      protocolError: `${harness.label} stdout was truncated; terminal result cannot be verified`,
+      rawOutput: stdout,
+    }
+    : result
 }
 
 export function harnessDefinitions(options) {

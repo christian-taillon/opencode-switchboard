@@ -72,6 +72,38 @@ test("Claude full mode uses auto permissions, not bypass", () => {
   assert.ok(!invocation.args.includes("bypassPermissions"))
 })
 
+test("Antigravity and Claude preserve native model/effort selectors on new and resumed calls", () => {
+  const pairs = [
+    ["antigravity", "gemini-3.8-flash-medium", "medium"],
+    ["claude", "claude-sonnet-5-5", "xhigh"],
+    ["claude", "claude-opus-5-5", "high"],
+    ["claude", "claude-haiku-5-5", "high"],
+  ]
+  for (const [id, model, effort] of pairs) {
+    for (const sessionID of [undefined, "retained-session"]) {
+      const invocation = buildInvocation(getHarness(id, options), {
+        prompt: "bounded task", mode: "plan", model, effort, sessionID, timeoutSeconds: 60,
+      })
+      assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], model)
+      assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], effort)
+      if (sessionID) assert.ok(invocation.args.includes(sessionID))
+    }
+  }
+})
+
+test("effort selections fail explicitly instead of being silently ignored", () => {
+  for (const id of ["antigravity", "claude"]) {
+    assert.throws(() => buildInvocation(getHarness(id, options), {
+      prompt: "task", mode: "plan", effort: "unsupported", timeoutSeconds: 60,
+    }), /unsupported effort/)
+  }
+  for (const id of ["gemini", "codex"]) {
+    assert.throws(() => buildInvocation(getHarness(id, options), {
+      prompt: "task", mode: "plan", effort: "high", timeoutSeconds: 60,
+    }), /effort selection is not/)
+  }
+})
+
 test("Gemini maps edit mode to auto_edit", () => {
   const harness = getHarness("gemini", options)
   const invocation = buildInvocation(harness, {
@@ -133,6 +165,7 @@ test("parsers normalize vendor response and session fields", () => {
     providerStatus: "SUCCESS",
     providerFailed: false,
     error: undefined,
+    deniedActions: undefined,
   })
 
   const claude = parseHarnessOutput(
@@ -173,6 +206,53 @@ test("Antigravity parser marks non-success terminal status as failed", () => {
   )
   assert.equal(parsed.providerFailed, true)
   assert.equal(parsed.providerStatus, "WAITING")
+})
+
+test("Antigravity retains headless permission denials despite SUCCESS and exit-zero output", () => {
+  const deniedActions = [{ action: "read_url", display_name: "ReadUrlContent" }]
+  const stdout = JSON.stringify({
+    conversation_id: "agy-denied",
+    status: "SUCCESS",
+    response: "",
+    denied_actions: deniedActions,
+    usage: { input_tokens: 12605, output_tokens: 1503 },
+  })
+  const parsed = parseHarnessOutput(getHarness("antigravity", options), stdout)
+  assert.equal(parsed.providerFailed, true)
+  assert.equal(parsed.providerStatus, "SUCCESS")
+  assert.equal(parsed.sessionID, "agy-denied")
+  assert.deepEqual(parsed.deniedActions, deniedActions)
+  assert.match(parsed.error, /read_url.*scoped permissions.allow/)
+  assert.match(parsed.protocolError, /nonempty response/)
+  assert.equal(parsed.rawOutput, stdout)
+
+  const withResponse = parseHarnessOutput(getHarness("antigravity", options), JSON.stringify({
+    status: "SUCCESS", response: "Unable to fetch the URL", denied_actions: deniedActions,
+  }))
+  assert.equal(withResponse.providerFailed, true)
+  assert.equal(withResponse.protocolError, undefined)
+})
+
+test("Antigravity requires valid JSON, terminal status, and a nonblank success response", () => {
+  const harness = getHarness("antigravity", options)
+  for (const stdout of ["", "not JSON", "[]", '{"response":"done"}',
+    '{"status":"SUCCESS"}', '{"status":"SUCCESS","response":"  \\n"}',
+    '{"status":"SUCCESS","response":123}', '{"status":"SUCCESS","message":"done"}']) {
+    const parsed = parseHarnessOutput(harness, stdout)
+    assert.ok(parsed.protocolError, stdout)
+    assert.equal(parsed.rawOutput, stdout)
+  }
+  const failed = parseHarnessOutput(harness, '{"status":"ERROR","response":"","error":"unauthenticated"}')
+  assert.equal(failed.providerFailed, true)
+  assert.equal(failed.error, "unauthenticated")
+  assert.equal(failed.protocolError, undefined)
+})
+
+test("truncated stdout cannot establish a terminal result even when retained JSON parses", () => {
+  const parsed = parseHarnessOutput(getHarness("antigravity", options),
+    '{"status":"SUCCESS","response":"done"}', { truncated: true })
+  assert.equal(parsed.response, "done")
+  assert.match(parsed.protocolError, /stdout was truncated/)
 })
 
 test("Codex rejects unsupported model override rather than silently ignoring it", () => {

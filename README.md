@@ -84,7 +84,7 @@ For Claude Code:
 ./integrations/claude-native/install.sh
 ```
 
-This adds a `claude-code` OpenCode subagent plus a `/claude` background command while keeping the existing `switchboard_delegate` interface unchanged. The profile is independently deployable and does not depend on `opencode-agents` or `rcfiles`; if the Switchboard backend is missing, its installer installs the backend from this checkout.
+This adds `claude` (`@claude`) and compatibility `claude-code` OpenCode subagents plus a `/claude` background command while keeping the existing `switchboard_delegate` interface unchanged. Both names use the same adapter template. The profile is independently deployable and does not depend on `opencode-agents` or `rcfiles`; if the Switchboard backend is missing, its installer installs the backend from this checkout.
 
 For Google Antigravity as a subagent only:
 
@@ -93,6 +93,17 @@ For Google Antigravity as a subagent only:
 ```
 
 This installs only the `antigravity` OpenCode subagent. It adds no command and no routing policy. See the profile READMEs for install and uninstall details.
+
+The native wrappers use `openai/gpt-6.1-sol#high` to select and forward work; the external harness performs the task. Their prompt-level model policy is:
+
+| Harness | Default | Task-based alternatives |
+| --- | --- | --- |
+| Antigravity | `gemini-3.8-flash-medium`, `medium` effort | Flash Low/`low` for lightweight work; Flash High/`high` for harder reasoning |
+| Claude Code | `claude-sonnet-5-5`, `xhigh` effort | `claude-opus-5-5`/`high` for harder jobs; `claude-haiku-5-5`/`high` for lightweight work |
+
+Parents can supply `externalModel` and `externalEffort` in the native subagent's task prompt. Explicit selections win; otherwise the wrapper chooses before starting and retains that pair on resume. The native OpenCode subagent tool's `model` argument changes the wrapper model, not the external harness. Unavailable selections are reported, not silently replaced. Future models are not selected until available and verified.
+
+Generic `switchboard_delegate` calls accept harness-native `model` and `effort` directly; omitted selectors use vendor defaults. `effort` is supported for Antigravity and Claude; unsupported harnesses reject it in this checkout. `requestedModel` and `requestedEffort` describe requested settings, not verified resolved metadata. Vendor-side caps or substitutions must still be checked.
 
 ## Agent integration
 
@@ -196,6 +207,8 @@ Possible Switchboard statuses are:
 
 Provider-native status and usage are preserved when the harness exposes them. `stderr` is included when present.
 
+Antigravity results with denied tools, invalid JSON, a missing status, or a blank `SUCCESS` response are `failed` even when the process exits `0`. `deniedActions` preserves the vendor's `denied_actions`; `protocolError` and `rawOutput` retain malformed or incomplete result evidence. Truncated stdout cannot establish completion. `stdoutTruncated` and `stderrTruncated` distinguish terminal-output loss from diagnostic-output loss; `outputTruncated` covers either.
+
 ## Task envelope
 
 Switchboard prepends a small worker contract to every delegated prompt. It tells the external harness that it is a bounded worker, to inspect repository guidance, not widen scope, not commit or push unless the task explicitly authorizes it, finish required checks synchronously, and return outcome/files/validation/risks.
@@ -283,6 +296,22 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash
 ```
 
 The other supported commands expected by v0.0.1 are `claude`, `gemini`, and `codex`.
+
+### Antigravity headless permissions
+
+Antigravity cannot prompt for permission during a delegation. Tools requiring approval are [soft-denied in headless mode](https://antigravity.google/docs/cli/headless/#permissions-in-headless-mode); the CLI can still exit `0` and return `SUCCESS` with an empty response and `denied_actions`. Switchboard reports this as a failure, not task completion.
+
+For an authorized URL lookup, the operator can add a scoped rule to `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`, preserving existing settings. For the [NOAA Phoenix station text report](https://tgftp.nws.noaa.gov/data/observations/metar/decoded/KPHX.TXT), use `read_url(tgftp.nws.noaa.gov)`. Keep the delegation in `plan` mode. Switchboard does not install grants or retry with broader permissions.
+
+These [vendor rules](https://antigravity.google/docs/permissions?tab=cli) cover a hostname and its subdomains, not an exact URL path. Conflicting rules take precedence in the order **deny > ask > allow**. Do not use `read_url(*)` or switch to `full` / `--dangerously-skip-permissions` to work around a denied lookup.
+
+Validated on 2026-10-08: Antigravity's native URL reader truncated the NWS GeoJSON and HTML observation pages before the weather fields. The short NOAA text report worked. This was vendor content conversion, not Switchboard stdout truncation; a completed delegation alone does not mean the requested data was obtained.
+
+### Claude Code sandbox prerequisites
+
+On Linux, Claude's [Bash sandbox](https://code.claude.com/docs/en/sandboxing#set-up-linux-and-wsl2) needs `bubblewrap` and `socat` on the harness's `PATH`. Without them, the CLI can warn that sandboxing is disabled and still complete a task. Check stderr; success is not proof of containment. Operators requiring sandboxing can set the vendor's `sandbox.failIfUnavailable` to `true` instead of accepting that fallback.
+
+Validated on 2026-10-08: native `@antigravity` retrieved Phoenix observations and resumed its external session; native `@claude` ran a Node assertion and retained context across external-session resume. Claude's missing-`socat` warning disappeared after installing the dependency and repeating the assertion. These were functional smoke tests, not a containment audit.
 
 ## Development
 

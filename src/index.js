@@ -136,6 +136,11 @@ export default Plugin.define({
               minLength: 1,
               description: "Optional harness-native model selector.",
             },
+            effort: {
+              type: "string",
+              minLength: 1,
+              description: "Optional Antigravity or Claude native reasoning effort: low, medium, high, xhigh, max. Unsupported harnesses reject it.",
+            },
             timeoutSeconds: {
               type: "integer",
               minimum: 1,
@@ -153,17 +158,19 @@ export default Plugin.define({
         },
         options: { namespace: "switchboard", codemode: true },
         execute: async (input, context) => {
+          const selection = { requestedModel: input.model ?? "unknown", requestedEffort: input.effort }
           let harness
           try {
             harness = getHarness(input.harness, options)
           } catch (error) {
-            return failure(input.harness, error.message)
+            return failure(input.harness, error.message, selection)
           }
 
           const executable = await findExecutable(harness.command)
           if (!executable) {
             return failure(harness.id, `CLI executable not found: ${harness.command}`, {
               installHint: harness.installHint,
+              ...selection,
             })
           }
 
@@ -179,10 +186,11 @@ export default Plugin.define({
               mode: requestedMode,
               sessionID: input.sessionID,
               model: input.model,
+              effort: input.effort,
               timeoutSeconds: resolveTimeoutSeconds(input.timeoutSeconds, options),
             })
           } catch (error) {
-            return failure(harness.id, error.message)
+            return failure(harness.id, error.message, selection)
           }
 
           if (invocation.mode !== "plan" && mutating.has(cwd)) {
@@ -190,7 +198,7 @@ export default Plugin.define({
             return failure(
               harness.id,
               `another mutating Switchboard delegation is already running in ${cwd}`,
-              { activeHarness: active },
+              { activeHarness: active, ...selection },
             )
           }
 
@@ -211,13 +219,18 @@ export default Plugin.define({
               signal: context.signal,
             })
 
-            const parsed = parseHarnessOutput(harness, execution.stdout)
-            const providerFailed = parsed.providerFailed === true
+            const parsed = parseHarnessOutput(harness, execution.stdout, {
+              truncated: execution.stdoutTruncated,
+            })
+            const providerFailed = parsed.providerFailed === true || Boolean(parsed.protocolError)
             const status =
               execution.status === "completed" && providerFailed ? "failed" : execution.status
             const error =
               execution.error ??
+              (execution.status === "timeout" ? "harness process timed out" : undefined) ??
+              (execution.status === "aborted" ? "harness process was aborted" : undefined) ??
               parsed.error ??
+              parsed.protocolError ??
               (status === "failed"
                 ? execution.stderr.trim() ||
                   (providerFailed
@@ -229,14 +242,20 @@ export default Plugin.define({
               status,
               harness: harness.id,
               mode: invocation.mode,
+              ...selection,
               sessionID: parsed.sessionID,
               response: parsed.response,
               providerStatus: parsed.providerStatus,
+              deniedActions: parsed.deniedActions,
+              protocolError: parsed.protocolError,
+              rawOutput: parsed.rawOutput,
               usage: parsed.usage,
               exitCode: execution.exitCode,
               signal: execution.signal,
               durationMs: execution.durationMs,
               stderr: execution.stderr.trim() || undefined,
+              stdoutTruncated: execution.stdoutTruncated,
+              stderrTruncated: execution.stderrTruncated,
               outputTruncated: execution.outputTruncated,
               error,
             })
