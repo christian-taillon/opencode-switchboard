@@ -1,5 +1,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
 import { findExecutable, runProcess } from "../src/runner.js"
 
 test("findExecutable resolves an absolute executable", async () => {
@@ -82,3 +86,70 @@ test("runProcess honors AbortSignal", async () => {
 
   assert.equal(result.status, "aborted")
 })
+
+for (const kind of ["timeout", "aborted"]) {
+  for (const stdio of ["ignore", "inherit"]) {
+    test(`runProcess ${kind} kills a resistant descendant with ${stdio} pipes after its leader exits`,
+      { skip: process.platform !== "linux", timeout: 10000 }, async () => {
+        const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-runner-"))
+        const pidfile = path.join(directory, "descendant.pid")
+        const controller = new AbortController()
+        let pid
+        let execution
+        try {
+          const descendant = `
+process.on('SIGTERM', () => {})
+require('node:fs').writeFileSync(${JSON.stringify(pidfile)}, String(process.pid))
+setInterval(() => {}, 1000)
+`
+          const leader = `
+require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { stdio: ${JSON.stringify(stdio)} })
+setInterval(() => {}, 1000)
+`
+          execution = runProcess({
+            command: process.execPath,
+            args: ["-e", leader],
+            cwd: directory,
+            timeoutMs: kind === "timeout" ? 1500 : 5000,
+            maxOutputBytes: 1024,
+            signal: controller.signal,
+          })
+          const readyDeadline = Date.now() + 3000
+          while (!pid && Date.now() < readyDeadline) {
+            try { pid = Number(await readFile(pidfile, "utf8")) } catch (error) {
+              if (error.code !== "ENOENT") throw error
+            }
+            if (!pid) await delay(10)
+          }
+          assert.ok(pid, "descendant installed its SIGTERM handler")
+          if (kind === "aborted") controller.abort()
+          const result = await execution
+          assert.equal(result.status, kind)
+
+          // A killed orphan can remain a zombie until the host reaps it.
+          let alive = true
+          const deadline = Date.now() + 1000
+          while (alive && Date.now() < deadline) {
+            try {
+              const stat = await readFile(`/proc/${pid}/stat`, "utf8")
+              alive = !["Z", "X"].includes(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0])
+            } catch (error) {
+              if (error.code !== "ENOENT") throw error
+              alive = false
+            }
+            if (alive) await delay(10)
+          }
+          assert.equal(alive, false, "descendant must not survive terminal cleanup")
+        } finally {
+          controller.abort()
+          if (pid) {
+            try { process.kill(pid, "SIGKILL") } catch (error) {
+              if (error.code !== "ESRCH") throw error
+            }
+          }
+          if (execution) await execution
+          await rm(directory, { recursive: true, force: true })
+        }
+      })
+  }
+}

@@ -55,28 +55,45 @@ function parseAntigravity(stdout) {
 
 function parseClaude(stdout) {
   const value = jsonObject(stdout.trim())
-  if (!value) return { response: stdout.trim() }
-  return {
-    response: firstString(value.result, value.response, value.message),
+  if (!value || Array.isArray(value)) {
+    return { protocolError: "Claude Code returned invalid JSON; expected a terminal result object", rawOutput: stdout }
+  }
+  const result = {
+    response: typeof value.result === "string" ? value.result : undefined,
     sessionID: firstString(value.session_id, value.sessionId, value.sessionID),
     usage: value.usage,
     providerStatus: value.subtype ?? value.status,
-    providerFailed: value.is_error === true || value.subtype === "error",
-    error: firstString(value.error?.message, value.error),
+    providerFailed: value.is_error === true || Boolean(value.error) ||
+      (value.type === "result" && typeof value.subtype === "string" && value.subtype !== "success"),
+    error: firstString(value.error?.message, value.error,
+      Array.isArray(value.errors) ? value.errors.filter((entry) => typeof entry === "string").join("\n") : undefined),
   }
+  let protocolError
+  if (value.type !== "result" || typeof value.subtype !== "string") {
+    protocolError = "Claude Code output is missing its terminal result type or subtype"
+  } else if (!result.providerFailed && !result.response?.trim()) {
+    protocolError = "Claude Code success result is missing a nonempty response"
+  }
+  return protocolError ? { ...result, protocolError, rawOutput: stdout } : result
 }
 
 function parseGemini(stdout) {
   const value = jsonObject(stdout.trim())
-  if (!value) return { response: stdout.trim() }
-  return {
-    response: firstString(value.response, value.result, value.message),
+  if (!value || Array.isArray(value)) {
+    return { protocolError: "Gemini CLI returned invalid JSON; expected a terminal result object", rawOutput: stdout }
+  }
+  const result = {
+    response: typeof value.response === "string" ? value.response : undefined,
     sessionID: firstString(value.session_id, value.sessionId, value.sessionID),
     usage: value.stats ?? value.usage,
     providerStatus: value.status,
     providerFailed: Boolean(value.error),
     error: firstString(value.error?.message, value.error),
   }
+  if (!result.providerFailed && !result.response?.trim()) {
+    return { ...result, protocolError: "Gemini CLI result is missing a nonempty response", rawOutput: stdout }
+  }
+  return result
 }
 
 function parseCodex(stdout) {
@@ -85,12 +102,18 @@ function parseCodex(stdout) {
   let usage
   let error
   let providerStatus
+  let providerFailed = false
+  let terminal = false
+  let protocolError
 
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim()
     if (!line) continue
     const event = jsonObject(line)
-    if (!event) continue
+    if (!event || Array.isArray(event) || typeof event.type !== "string") {
+      protocolError = "Codex returned invalid JSONL; expected event objects"
+      continue
+    }
 
     sessionID = firstString(
       event.thread_id,
@@ -102,28 +125,35 @@ function parseCodex(stdout) {
     )
 
     const item = event.item
-    if (item && typeof item === "object" && item.type === "agent_message") {
+    if (event.type === "item.completed" && item?.type === "agent_message") {
       response = firstString(item.text, item.content, response)
     }
-    if (event.type === "agent_message") {
-      response = firstString(event.text, event.content, response)
+    if (event.type === "turn.started") {
+      response = undefined
     }
-    if (event.type === "message" && event.role === "assistant") {
-      response = firstString(event.text, event.content, response)
+    terminal = event.type === "turn.completed" || event.type === "turn.failed"
+    if (terminal) {
+      providerStatus = event.type
     }
+    providerFailed ||= event.type === "turn.failed" || event.type === "error" || Boolean(event.error)
 
     usage = event.usage ?? event.turn?.usage ?? usage
-    providerStatus = firstString(event.status, event.type, providerStatus)
-    error = firstString(event.error?.message, event.error, error)
+    error = firstString(event.error?.message, event.error,
+      event.type === "error" ? event.message : undefined, error)
   }
 
+  if (!providerFailed) {
+    if (!terminal) protocolError ??= "Codex output is missing its terminal turn event"
+    else if (!response?.trim()) protocolError ??= "Codex completed turn is missing a nonempty response"
+  }
   return {
-    response: response ?? stdout.trim(),
+    response,
     sessionID,
     usage,
     providerStatus,
-    providerFailed: Boolean(error),
+    providerFailed,
     error,
+    ...(protocolError ? { protocolError, rawOutput: stdout } : {}),
   }
 }
 

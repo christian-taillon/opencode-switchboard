@@ -174,6 +174,8 @@ test("parsers normalize vendor response and session fields", () => {
   )
   assert.equal(claude.response, "done")
   assert.equal(claude.sessionID, "c-1")
+  assert.equal(claude.providerFailed, false)
+  assert.equal(claude.protocolError, undefined)
 
   const gemini = parseHarnessOutput(
     getHarness("gemini", options),
@@ -181,6 +183,8 @@ test("parsers normalize vendor response and session fields", () => {
   )
   assert.equal(gemini.response, "done")
   assert.equal(gemini.sessionID, "g-1")
+  assert.equal(gemini.providerFailed, false)
+  assert.equal(gemini.protocolError, undefined)
 })
 
 test("Codex JSONL parser captures thread, agent message, and usage", () => {
@@ -197,6 +201,90 @@ test("Codex JSONL parser captures thread, agent message, and usage", () => {
   assert.equal(parsed.sessionID, "thread-1")
   assert.equal(parsed.response, "implemented")
   assert.deepEqual(parsed.usage, { input_tokens: 10, output_tokens: 3 })
+  assert.equal(parsed.providerStatus, "turn.completed")
+  assert.equal(parsed.providerFailed, false)
+  assert.equal(parsed.protocolError, undefined)
+})
+
+test("Claude and Gemini reject malformed, non-terminal, and blank success output", () => {
+  for (const [id, cases] of [
+    ["claude", [
+      { type: "system", subtype: "init", session_id: "c" },
+      { type: "assistant", message: "partial" },
+      { result: "done" },
+      { type: "result", subtype: "success" },
+      { type: "result", subtype: "success", result: " \n" },
+      { type: "result", subtype: "success", result: 123 },
+    ]],
+    ["gemini", [
+      { session_id: "g", stats: {} },
+      { type: "init", message: "partial" },
+      { result: "done" },
+      { response: " \n" },
+      { response: 123 },
+    ]],
+  ]) {
+    for (const stdout of ["", "not JSON", "[]", "null", "123", ...cases.map((value) => JSON.stringify(value))]) {
+      const parsed = parseHarnessOutput(getHarness(id, options), stdout)
+      assert.ok(parsed.protocolError, `${id}: ${stdout}`)
+      assert.equal(parsed.rawOutput, stdout)
+    }
+  }
+})
+
+test("Claude and Gemini preserve terminal failures without requiring a response", () => {
+  const claude = parseHarnessOutput(getHarness("claude", options), JSON.stringify({
+    type: "result", subtype: "error_max_turns", is_error: true,
+    session_id: "c", errors: ["turn limit reached"],
+  }))
+  assert.equal(claude.providerFailed, true)
+  assert.equal(claude.providerStatus, "error_max_turns")
+  assert.equal(claude.sessionID, "c")
+  assert.equal(claude.error, "turn limit reached")
+  assert.equal(claude.protocolError, undefined)
+
+  const gemini = parseHarnessOutput(getHarness("gemini", options), JSON.stringify({
+    session_id: "g", error: { type: "AuthenticationError", message: "not authenticated" },
+  }))
+  assert.equal(gemini.providerFailed, true)
+  assert.equal(gemini.sessionID, "g")
+  assert.equal(gemini.error, "not authenticated")
+  assert.equal(gemini.protocolError, undefined)
+})
+
+test("Codex requires valid events, terminal completion, and a completed agent message", () => {
+  const started = { type: "thread.started", thread_id: "t" }
+  const message = { type: "item.completed", item: { type: "agent_message", text: "done" } }
+  const completed = { type: "turn.completed" }
+  for (const events of [
+    [], ["not JSON"], ["[]"], ["{}"], [started], [started, message],
+    [started, completed],
+    [{ type: "item.started", item: message.item }, completed],
+    [message, completed, "malformed tail"],
+    [message, completed, { type: "turn.started" }],
+    [message, completed, started],
+    [message, completed, { type: "item.started", item: message.item }],
+    [{ ...message, item: { type: "agent_message", text: " \n" } }, completed],
+  ]) {
+    const stdout = events.map((event) => typeof event === "string" ? event : JSON.stringify(event)).join("\n")
+    const parsed = parseHarnessOutput(getHarness("codex", options), stdout)
+    assert.ok(parsed.protocolError, stdout)
+    assert.equal(parsed.rawOutput, stdout)
+  }
+})
+
+test("Codex error events and failed turns fail even without an error message", () => {
+  for (const event of [
+    { type: "turn.failed" },
+    { type: "turn.failed", error: { message: "turn failed" } },
+    { type: "error", message: "stream failed" },
+    { type: "error" },
+  ]) {
+    const parsed = parseHarnessOutput(getHarness("codex", options), JSON.stringify(event))
+    assert.equal(parsed.providerFailed, true)
+    assert.equal(parsed.error, event.error?.message ?? event.message)
+    assert.equal(parsed.protocolError, undefined)
+  }
 })
 
 test("Antigravity parser marks non-success terminal status as failed", () => {

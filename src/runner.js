@@ -79,9 +79,15 @@ export async function runProcess({
     let timeoutHandle
     let killHandle
     let termination = undefined
+    let pendingResult
 
     const finish = (result) => {
       if (settled) return
+      // The group may outlive its leader and close the captured pipes early.
+      if (killHandle) {
+        pendingResult = result
+        return
+      }
       settled = true
       clearTimeout(timeoutHandle)
       clearTimeout(killHandle)
@@ -128,8 +134,9 @@ export async function runProcess({
         } catch {
           // The process may already be gone.
         }
+        killHandle = undefined
+        if (pendingResult) finish(pendingResult)
       }, 500)
-      killHandle.unref?.()
     }
 
     const onAbort = () => beginTermination("aborted")

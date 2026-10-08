@@ -111,3 +111,67 @@ process.stderr.write(${JSON.stringify(notice)})
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test("delegate requires terminal output from Claude, Gemini, and Codex despite exit zero", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-terminal-"))
+  try {
+    const command = path.join(directory, "harness-fixture")
+    let delegate
+    await plugin.setup({
+      options: { harnesses: Object.fromEntries(["claude", "gemini", "codex"].map((id) => [id, { command }])) },
+      location: { directory },
+      skill: { transform: async (callback) => callback({ add: () => {} }) },
+      tool: {
+        transform: async (callback) => callback({
+          namespace: () => {},
+          add: (tool) => { if (tool.name === "delegate") delegate = tool },
+        }),
+      },
+    })
+    const outputs = {
+      claude: [
+        '{"type":"system","subtype":"init","session_id":"c"}',
+        '{"type":"result","subtype":"success","result":"done"}',
+        '{"type":"result","subtype":"error_max_turns","errors":["turn limit"]}',
+      ],
+      gemini: [
+        '{"session_id":"g","stats":{}}',
+        '{"response":"done"}',
+        '{"error":{"message":"not authenticated"}}',
+      ],
+      codex: [
+        '{"type":"thread.started","thread_id":"t"}',
+        '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\n{"type":"turn.completed"}',
+        '{"type":"turn.failed"}',
+      ],
+    }
+    for (const [harness, [incomplete, success, failure]] of Object.entries(outputs)) {
+      for (const [stdout, status, invalid] of [
+        ["not JSON", "failed", true],
+        [incomplete, "failed", true],
+        [success, "completed", false],
+        [failure, "failed", false],
+      ]) {
+        await writeFile(command, `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(stdout)})\n`)
+        await chmod(command, 0o700)
+        const output = await delegate.execute({ harness, prompt: "fixture", mode: "plan" }, {
+          progress: async () => {},
+        })
+        const result = JSON.parse(output.content)
+        assert.equal(result.exitCode, 0)
+        assert.equal(result.status, status, `${harness}: ${stdout}`)
+        if (invalid) {
+          assert.ok(result.protocolError)
+          assert.equal(result.error, result.protocolError)
+          assert.equal(result.rawOutput, stdout)
+        } else {
+          assert.equal(result.protocolError, undefined)
+          if (status === "completed") assert.equal(result.response, "done")
+          else assert.ok(result.error)
+        }
+      }
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

@@ -10,6 +10,8 @@ This optional profile exposes Google Antigravity as a normal OpenCode subagent w
 
 The profile does not add commands or routing policy. Your existing OpenCode agent configuration decides when or whether to call `antigravity`.
 
+The [agent template](agents/antigravity.md) is the maintained example. It uses GPT-6.1 Sol high to forward tasks; change its OpenCode `model` if that provider is unavailable. See [model defaults](../../README.md#optional-native-subagent-profiles) and [use, opt-out, and permission examples](../../README.md#tell-agents-when-to-delegate).
+
 If the Switchboard plugin is not already installed under `~/.config/opencode/plugins/switchboard`, the installer copies the backend from this checkout and installs its production dependency.
 
 ## Mental model

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reject malformed or non-terminal Claude, Gemini, and Codex output even on exit `0`; retain protocol diagnostics and recognize explicit provider failures.
+- Keep timeout/cancellation SIGKILL escalation alive after the group leader exits, and wait for it before returning.
 - Use GPT-6.1 Sol high for native wrappers, with parent-overridable, task-based external model/effort policies and explicit selector retention on resume.
 - Forward Antigravity and Claude reasoning effort and report requested selectors; reject unsupported effort selections instead of ignoring them.
 - Fail Antigravity delegations on headless tool denials or invalid/blank terminal results even when the CLI exits `0`; preserve denied actions and protocol evidence.
