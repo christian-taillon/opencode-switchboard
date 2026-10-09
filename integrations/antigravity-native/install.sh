@@ -11,7 +11,25 @@ backup_dir="$config_dir/backups/antigravity-native-$stamp"
 
 mkdir -p "$agent_dir" "$config_dir/plugins"
 
-if [[ ! -f "$plugin_dir/package.json" ]]; then
+# A plugin entry naming Switchboard (for example an absolute checkout path) is
+# already a backend; installing another copy under plugins/ would load it twice.
+configured_backend() {
+  local file
+  command -v jq >/dev/null 2>&1 || return 1
+  for file in "$config_dir/opencode.json" "$config_dir/opencode.jsonc"; do
+    [[ -f "$file" ]] || continue
+    sed -E 's#^[[:space:]]*//.*$##' "$file" | jq -er '[(.plugins // .plugin // [])[]
+      | if type == "string" then . else (.package // empty) end
+      | select(test("switchboard"))][0] // empty' 2>/dev/null && return 0
+  done
+  return 1
+}
+
+if [[ -f "$plugin_dir/package.json" ]]; then
+  printf '%s\n' "using existing Switchboard backend: $plugin_dir"
+elif configured=$(configured_backend); then
+  printf '%s\n' "using configured Switchboard backend: $configured"
+else
   if ! command -v pnpm >/dev/null 2>&1; then
     printf '%s\n' "error: pnpm is required to install the Switchboard backend" >&2
     exit 1
@@ -25,8 +43,6 @@ if [[ ! -f "$plugin_dir/package.json" ]]; then
     pnpm install --prod --ignore-scripts
   )
   printf '%s\n' "installed Switchboard backend: $plugin_dir"
-else
-  printf '%s\n' "using existing Switchboard backend: $plugin_dir"
 fi
 
 if [[ -e "$agent_dir/antigravity.md" || -L "$agent_dir/antigravity.md" ]]; then

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Native installers reuse a Switchboard plugin already listed in `opencode.json` instead of copying a second backend into the auto-discovered `plugins/` directory.
 - Pass harnesses an allowlisted environment instead of OpenCode's full environment; configurable per harness with `envAllowlist`.
 - Run delegations in the calling session's workspace rather than the plugin load location, and lock overlapping checkouts across sessions.
 - Refuse Antigravity and Gemini `full` (vendor permission bypass) unless an approved `executionProfile` launcher is configured.

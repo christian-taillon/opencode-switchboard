@@ -113,3 +113,24 @@ for (const legacy of [false, true]) {
     assert.equal(await readFile(join(plugin, "package.json"), "utf8"), backend)
   })
 }
+
+test("native installers reuse a Switchboard plugin configured by path instead of installing a second copy", async (t) => {
+  await mkdir("/tmp/opencode", { recursive: true })
+  const config = await mkdtemp("/tmp/opencode/native-configured-backend-")
+  t.after(() => rm(config, { recursive: true, force: true }))
+  const checkout = "/home/example/github/switchboard"
+  await writeFile(join(config, "opencode.json"), JSON.stringify({
+    plugins: ["@example/other@1.0.0", { package: checkout, options: {} }],
+    permissions: [{ action: "switchboard_delegate", resource: "*", effect: "allow" }],
+  }))
+  for (const [integration, expected] of [
+    ["claude-native", /using existing Switchboard backend: \/home\/example\/github\/switchboard/],
+    ["antigravity-native", /using configured Switchboard backend: \/home\/example\/github\/switchboard/],
+  ]) {
+    const { stdout } = await exec("bash", [
+      fileURLToPath(new URL(`../integrations/${integration}/install.sh`, import.meta.url)),
+    ], { env: { ...process.env, HOME: config, OPENCODE_CONFIG_DIR: config }, timeout: 10_000 })
+    assert.match(stdout, expected)
+    assert.deepEqual(await readdir(join(config, "plugins")), [], `${integration} installed a duplicate backend`)
+  }
+})

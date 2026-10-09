@@ -21,8 +21,27 @@ backup_if_present() {
   fi
 }
 
+# A plugin entry naming Switchboard (for example an absolute checkout path) is
+# already a backend; installing another copy under plugins/ would load it twice.
+configured_backend() {
+  local file
+  command -v jq >/dev/null 2>&1 || return 1
+  for file in "$config_dir/opencode.json" "$config_dir/opencode.jsonc"; do
+    [[ -f "$file" ]] || continue
+    sed -E 's#^[[:space:]]*//.*$##' "$file" | jq -er '[(.plugins // .plugin // [])[]
+      | if type == "string" then . else (.package // empty) end
+      | select(test("switchboard"))][0] // empty' 2>/dev/null && return 0
+  done
+  return 1
+}
+
 backend_installed=false
-if [[ ! -f "$plugin_dir/package.json" ]]; then
+backend="$plugin_dir"
+if [[ -f "$plugin_dir/package.json" ]]; then
+  :
+elif configured=$(configured_backend); then
+  backend="$configured"
+else
   if ! command -v pnpm >/dev/null 2>&1; then
     printf '%s\n' "error: pnpm is required to install the Switchboard backend" >&2
     exit 1
@@ -55,9 +74,9 @@ if [[ -d "$backup_dir" ]]; then
   printf 'backup: %s\n' "$backup_dir"
 fi
 if [[ "$backend_installed" == "true" ]]; then
-  printf 'installed Switchboard backend: %s\n' "$plugin_dir"
+  printf 'installed Switchboard backend: %s\n' "$backend"
 else
-  printf 'using existing Switchboard backend: %s\n' "$plugin_dir"
+  printf 'using existing Switchboard backend: %s\n' "$backend"
 fi
 printf 'installed @claude agent: %s\n' "$agent_dir/claude.md"
 printf 'installed /claude command: %s\n' "$command_dir/claude.md"

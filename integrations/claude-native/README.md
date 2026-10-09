@@ -9,7 +9,7 @@ This optional profile makes Claude Code feel like a normal OpenCode subagent whi
 ~/.config/opencode/commands/claude.md
 ```
 
-If the Switchboard plugin is not already installed under `~/.config/opencode/plugins/switchboard`, the installer copies the plugin from this checkout and installs its production dependency. Existing Switchboard installations are left untouched.
+If the Switchboard plugin is neither installed under `~/.config/opencode/plugins/switchboard` nor listed in `opencode.json` `plugins` (for example by absolute checkout path), the installer copies the plugin from this checkout and installs its production dependency. Existing Switchboard installations are left untouched.
 
 The [agent template](agents/claude.md) is the maintained example for the canonical `claude` agent. It uses GPT-6.1 Sol high to forward tasks to Claude Code; change its OpenCode `model` if that provider is unavailable. See the root README for [model defaults](../../README.md#optional-native-subagent-profiles).
 
