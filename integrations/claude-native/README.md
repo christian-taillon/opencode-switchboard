@@ -22,6 +22,16 @@ The [agent template](agents/claude-code.md) is the maintained example for both n
 
 `@claude-code` remains available for existing callers. Both profiles are installed from the same template.
 
+### Keep only `@claude`
+
+For an existing installation that no longer needs the duplicate agent ID:
+
+1. Keep `~/.config/opencode/agents/claude.md` and remove only the duplicate `~/.config/opencode/agents/claude-code.md`.
+2. Set `agent: claude` in `~/.config/opencode/commands/claude.md`; keep `subagent: true`.
+3. Remove obsolete `subagent` permission entries for `claude-code` from parents that now call only `claude`. Preserve their other permissions.
+
+This changes the OpenCode agent name, not the upstream Claude Code product, CLI, external model policy, or Switchboard harness ID. The current installer still recreates the duplicate and restores the command target to `claude-code`; do not rerun it expecting a single-name installation.
+
 Or use the convenience command:
 
 ```text

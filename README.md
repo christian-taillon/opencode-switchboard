@@ -56,6 +56,8 @@ The maintained agent examples are already in the repository:
 
 The Claude installer generates both agent names from one template. Wrappers require access to `openai/gpt-6.1-sol#high`, or changing the installed agent's `model` line to an available OpenCode model. This provider requirement does not apply to generic Switchboard use.
 
+To keep only `@claude`, follow the [single-name cleanup](integrations/claude-native/README.md#keep-only-claude). The current installer still creates both names.
+
 The native wrappers use `openai/gpt-6.1-sol#high` to select and forward work; the external harness performs the task. Their prompt-level model policy is:
 
 | Harness | Default | Task-based alternatives |
