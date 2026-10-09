@@ -12,6 +12,8 @@ The profile does not add commands or routing policy. Your existing OpenCode agen
 
 The [agent template](agents/antigravity.md) is the maintained example. It uses GPT-6.1 Sol high to forward tasks; change its OpenCode `model` if that provider is unavailable. See [model defaults](../../README.md#optional-native-subagent-profiles) and [use, opt-out, and permission examples](../../README.md#tell-agents-when-to-delegate).
 
+For opinionated parent routing and customized harness profiles, see the companion [opencode-agents](https://github.com/christian-taillon/opencode-agents) repository. Those definitions are maintained separately; this installer backs up and replaces an existing wrapper rather than merging its customizations.
+
 If the Switchboard plugin is neither installed under `~/.config/opencode/plugins/switchboard` nor listed in `opencode.json` `plugins` (for example by absolute checkout path), the installer copies the backend from this checkout and installs its production dependency.
 
 ## Mental model

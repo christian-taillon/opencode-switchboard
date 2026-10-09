@@ -13,6 +13,8 @@ If the Switchboard plugin is neither installed under `~/.config/opencode/plugins
 
 The [agent template](agents/claude.md) is the maintained example for the canonical `claude` agent. It uses GPT-6.1 Sol high to forward tasks to Claude Code; change its OpenCode `model` if that provider is unavailable. See the root README for [model defaults](../../README.md#optional-native-subagent-profiles).
 
+For opinionated parent routing and customized harness profiles, see the companion [opencode-agents](https://github.com/christian-taillon/opencode-agents) repository. Those definitions are maintained separately; this installer backs up and replaces an existing wrapper rather than merging its customizations.
+
 ## Manual use
 
 ```text

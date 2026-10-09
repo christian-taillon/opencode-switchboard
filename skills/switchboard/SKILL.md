@@ -33,3 +33,10 @@ Do not run overlapping mutating Switchboard delegates against the same working d
 Treat the harness response as evidence, not authority. Inspect important diffs and validation claims before accepting the work. Reconcile failures as implementation defects, task-envelope problems, missing CLI/authentication, permission-mode failures, timeouts, or genuine external blockers.
 
 A terminal Switchboard result reports status, harness, external `sessionID` when available, response, exit code, duration, stderr, usage when exposed by the harness, and truncation state.
+
+## Companion repositories
+
+- [opencode-switchboard](https://github.com/christian-taillon/opencode-switchboard): plugin installation, delegation modes, session/result contracts, and standalone native wrapper templates.
+- [opencode-agents](https://github.com/christian-taillon/opencode-agents): opinionated parent routing, permissions, and customized `claude` / `antigravity` profiles using Switchboard.
+
+The agent collection is optional. Backend and agent-definition updates are separate; changes are not automatically synchronized between repositories.

@@ -18,6 +18,12 @@ It also registers the `switchboard` skill. Agent prompt awareness is opt-in thro
 
 The parent sends a bounded task, not its conversation history. Switchboard runs the vendor CLI and returns its terminal result.
 
+## Companion agent definitions
+
+[opencode-agents](https://github.com/christian-taillon/opencode-agents) provides opinionated OpenCode parent routing, permissions, and customized `claude` / `antigravity` profiles that use Switchboard. This repository provides the execution backend, delegation/session contract, and standalone [native wrapper templates](#optional-native-subagent-profiles).
+
+The agent collection is optional. Installing Switchboard does not install those definitions or adopt their routing policy. Update the backend and agent definitions separately; the native profile installers back up and replace existing wrappers rather than merging customizations.
+
 ## Install
 
 Prerequisites:
