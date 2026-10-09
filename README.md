@@ -47,16 +47,16 @@ From the checkout, install either or both:
 ./integrations/claude-native/install.sh
 ```
 
-This exposes `@antigravity`, `@claude`, compatibility `@claude-code`, and `/claude` (which targets `claude-code`). Existing plugin installations are left untouched; update the backend separately when its code changes. Installers do not change parent routing or vendor permissions.
+This exposes `@antigravity`, `@claude`, and `/claude` (which targets `claude`). Existing plugin installations are left untouched; update the backend separately when its code changes. Installers do not change parent routing or vendor permissions.
 
 The maintained agent examples are already in the repository:
 
 - [Antigravity template](integrations/antigravity-native/agents/antigravity.md) · [install/uninstall](integrations/antigravity-native/README.md)
-- [Claude template](integrations/claude-native/agents/claude-code.md) · [install/uninstall](integrations/claude-native/README.md)
+- [Claude template](integrations/claude-native/agents/claude.md) · [install/uninstall](integrations/claude-native/README.md)
 
-The Claude installer generates both agent names from one template. Wrappers require access to `openai/gpt-6.1-sol#high`, or changing the installed agent's `model` line to an available OpenCode model. This provider requirement does not apply to generic Switchboard use.
+Wrappers require access to `openai/gpt-6.1-sol#high`, or changing the installed agent's `model` line to an available OpenCode model. This provider requirement does not apply to generic Switchboard use.
 
-To keep only `@claude`, follow the [single-name cleanup](integrations/claude-native/README.md#keep-only-claude). The current installer still creates both names.
+The Claude installer backs up and removes the legacy `claude-code` duplicate. Follow the [migration notes](integrations/claude-native/README.md#keep-only-claude) to update parent routing and permissions.
 
 The native wrappers use `openai/gpt-6.1-sol#high` to select and forward work; the external harness performs the task. Their prompt-level model policy is:
 
@@ -93,12 +93,9 @@ Prompt instructions guide behavior. [OpenCode permissions](https://opencode.ai/v
   - action: subagent
     resource: claude
     effect: allow
-  - action: subagent
-    resource: claude-code
-    effect: allow
 ```
 
-No direct Switchboard permissions are needed by a parent that only calls these wrappers. To prohibit native delegation, change the relevant effects to `deny`. Cover both Claude IDs. Last matching rule wins; keep specific rules after broader ones.
+No direct Switchboard permissions are needed by a parent that only calls these wrappers. To prohibit native delegation, change the relevant effects to `deny`. Remove obsolete `claude-code` rules after migration. Last matching rule wins; keep specific rules after broader ones.
 
 If the parent can also call Switchboard directly, deny that route separately:
 

@@ -1,11 +1,16 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
+import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8")
+const exec = promisify(execFile)
 
 test("claude-native agent is a thin subagent adapter", async () => {
-  const agent = await read("../integrations/claude-native/agents/claude-code.md")
+  const agent = await read("../integrations/claude-native/agents/claude.md")
 
   assert.match(agent, /mode:\s*subagent/)
   assert.match(agent, /model:\s*openai\/gpt-6\.1-sol#high/)
@@ -36,7 +41,7 @@ test("claude-native agent is a thin subagent adapter", async () => {
 test("/claude uses the native OpenCode child-session command path", async () => {
   const command = await read("../integrations/claude-native/commands/claude.md")
 
-  assert.match(command, /agent:\s*claude-code/)
+  assert.match(command, /^agent: claude$/m)
   assert.match(command, /subagent:\s*true/)
   assert.match(command, /\$ARGUMENTS/)
 })
@@ -48,11 +53,63 @@ test("claude-native profile remains optional and independently installable", asy
   assert.match(install, /plugins\/switchboard/)
   assert.match(install, /agents\/claude-code\.md/)
   assert.ok(install.includes('backup_if_present "$agent_dir/claude.md" "agents/claude.md"'))
+  assert.ok(install.includes('install -m 0644 "$integration_dir/agents/claude.md" "$agent_dir/claude.md"'))
+  assert.ok(install.includes('rm -f "$agent_dir/claude-code.md"'))
   for (const id of ["claude-code", "claude"]) {
-    assert.ok(install.includes(`install -m 0644 "$integration_dir/agents/claude-code.md" "$agent_dir/${id}.md"`))
     assert.ok(uninstall.includes(`rm -f "$config_dir/agents/${id}.md"`))
   }
   assert.match(install, /commands\/claude\.md/)
   assert.match(uninstall, /--remove-plugin/)
   assert.match(uninstall, /\.installed-by-claude-native/)
 })
+
+for (const legacy of [false, true]) {
+  test(`claude-native ${legacy ? "upgrade backs up and removes legacy routing" : "install exposes only canonical routing"}`, async (t) => {
+    await mkdir("/tmp/opencode", { recursive: true })
+    const config = await mkdtemp("/tmp/opencode/claude-native-test-")
+    t.after(() => rm(config, { recursive: true, force: true }))
+    const agents = join(config, "agents")
+    const commands = join(config, "commands")
+    const plugin = join(config, "plugins/switchboard")
+    await Promise.all([agents, commands, plugin].map((path) => mkdir(path, { recursive: true })))
+    const backend = '{"name":"preexisting-test-backend"}\n'
+    await writeFile(join(plugin, "package.json"), backend)
+    await writeFile(join(agents, "unrelated.md"), "untouched agent")
+    const originals = {
+      "agents/claude-code.md": "legacy wrapper",
+      "agents/claude.md": "custom canonical wrapper",
+      "commands/claude.md": "---\nagent: claude-code\nsubagent: true\n---\n$ARGUMENTS\n",
+    }
+    if (legacy) {
+      for (const [path, content] of Object.entries(originals)) {
+        await writeFile(join(config, path), content)
+      }
+    }
+    const run = (script, args = []) => exec("bash", [
+      fileURLToPath(new URL(`../integrations/claude-native/${script}.sh`, import.meta.url)), ...args,
+    ], { env: { ...process.env, HOME: config, OPENCODE_CONFIG_DIR: config }, timeout: 10_000 })
+
+    const { stdout } = await run("install")
+    assert.match(stdout, /using existing Switchboard backend/)
+    assert.deepEqual((await readdir(agents)).sort(), ["claude.md", "unrelated.md"])
+    assert.equal(await readFile(join(agents, "claude.md"), "utf8"), await read("../integrations/claude-native/agents/claude.md"))
+    assert.equal(await readFile(join(commands, "claude.md"), "utf8"), await read("../integrations/claude-native/commands/claude.md"))
+    assert.equal(await readFile(join(plugin, "package.json"), "utf8"), backend)
+    if (legacy) {
+      const backups = await readdir(join(config, "backups"))
+      assert.equal(backups.length, 1)
+      for (const [path, content] of Object.entries(originals)) {
+        assert.equal(await readFile(join(config, "backups", backups[0], path), "utf8"), content)
+      }
+      await writeFile(join(agents, "claude-code.md"), "legacy leftover")
+    } else {
+      await assert.rejects(readdir(join(config, "backups")), { code: "ENOENT" })
+    }
+
+    await run("uninstall", ["--remove-plugin"])
+    assert.deepEqual(await readdir(agents), ["unrelated.md"])
+    assert.deepEqual(await readdir(commands), [])
+    assert.equal(await readFile(join(agents, "unrelated.md"), "utf8"), "untouched agent")
+    assert.equal(await readFile(join(plugin, "package.json"), "utf8"), backend)
+  })
+}

@@ -1,5 +1,5 @@
 ---
-description: Claude Code engineering worker for cohesive implementation, refactoring, difficult debugging, and high-quality bounded coding tasks through Switchboard.
+description: Thin Claude Code engineering adapter through Switchboard for @claude and /claude.
 mode: subagent
 model: openai/gpt-6.1-sol#high
 steps: 10

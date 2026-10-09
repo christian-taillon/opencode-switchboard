@@ -43,9 +43,9 @@ backup_if_present "$agent_dir/claude-code.md" "agents/claude-code.md"
 backup_if_present "$agent_dir/claude.md" "agents/claude.md"
 backup_if_present "$command_dir/claude.md" "commands/claude.md"
 
-install -m 0644 "$integration_dir/agents/claude-code.md" "$agent_dir/claude-code.md"
-install -m 0644 "$integration_dir/agents/claude-code.md" "$agent_dir/claude.md"
+install -m 0644 "$integration_dir/agents/claude.md" "$agent_dir/claude.md"
 install -m 0644 "$integration_dir/commands/claude.md" "$command_dir/claude.md"
+rm -f "$agent_dir/claude-code.md"
 
 if ! command -v claude >/dev/null 2>&1; then
   printf '%s\n' "warning: Claude Code executable 'claude' is not on PATH"
@@ -59,7 +59,6 @@ if [[ "$backend_installed" == "true" ]]; then
 else
   printf 'using existing Switchboard backend: %s\n' "$plugin_dir"
 fi
-printf 'installed claude-code agent: %s\n' "$agent_dir/claude-code.md"
 printf 'installed @claude agent: %s\n' "$agent_dir/claude.md"
 printf 'installed /claude command: %s\n' "$command_dir/claude.md"
 printf '%s\n' "reload OpenCode, confirm 'opencode plugin list', then try '/claude inspect this repository'"
