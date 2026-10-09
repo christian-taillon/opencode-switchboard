@@ -13,7 +13,7 @@ test("claude-native agent is a thin subagent adapter", async () => {
   const agent = await read("../integrations/claude-native/agents/claude.md")
 
   assert.match(agent, /mode:\s*subagent/)
-  assert.match(agent, /model:\s*openai\/gpt-6\.1-sol#high/)
+  assert.match(agent, /model:\s*openai\/gpt-6-luna#high/)
   assert.match(agent, /action:\s*execute\s*\n\s*resource:\s*"\*"\s*\n\s*effect:\s*allow/)
   assert.match(agent, /tools\.switchboard\.delegate/)
   assert.match(agent, /tools\.switchboard\.harnesses/)
@@ -27,9 +27,9 @@ test("claude-native agent is a thin subagent adapter", async () => {
   }
   assert.match(agent, /relevant stderr blockers/)
   assert.match(agent, /never escalate mode, bypass permissions, or silently retry/)
-  assert.match(agent, /model: "claude-sonnet-5-5"`, `effort: "xhigh"/)
-  assert.match(agent, /`claude-opus-5-5` with `high` effort/)
-  assert.match(agent, /`claude-haiku-5-5` with `high` effort/)
+  assert.match(agent, /model: "claude-opus-5-5"`, `effort: "high"/)
+  assert.match(agent, /`claude-sonnet-5-5` with `xhigh` effort/)
+  assert.match(agent, /`claude-haiku-4-5` with no effort selector/)
   assert.match(agent, /Parent selections win over task-based choices/)
   assert.match(agent, /`externalModel` and `externalEffort`/)
   assert.match(agent, /Explicitly resend both retained `model` and `effort`/)

@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -53,6 +53,7 @@ test("delegate fails closed on Antigravity denials and empty success, retaining 
     await plugin.setup({
       options: { harnesses: { antigravity: { command } } },
       location: { directory },
+      session: { get: async () => ({ location: { directory } }) },
       skill: { transform: async (callback) => callback({ add: () => {} }) },
       tool: {
         transform: async (callback) => callback({
@@ -82,6 +83,7 @@ process.stderr.write(${JSON.stringify(notice)})
       const output = await delegate.execute({
         harness: "antigravity", prompt: "fixture", mode: "plan", model: "gemini-3.8-flash-medium", effort: "medium",
       }, {
+        sessionID: "ses_fixture",
         progress: async () => {},
       })
       const result = JSON.parse(output.content)
@@ -120,6 +122,7 @@ test("delegate requires terminal output from Claude, Gemini, and Codex despite e
     await plugin.setup({
       options: { harnesses: Object.fromEntries(["claude", "gemini", "codex"].map((id) => [id, { command }])) },
       location: { directory },
+      session: { get: async () => ({ location: { directory } }) },
       skill: { transform: async (callback) => callback({ add: () => {} }) },
       tool: {
         transform: async (callback) => callback({
@@ -155,6 +158,7 @@ test("delegate requires terminal output from Claude, Gemini, and Codex despite e
         await writeFile(command, `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(stdout)})\n`)
         await chmod(command, 0o700)
         const output = await delegate.execute({ harness, prompt: "fixture", mode: "plan" }, {
+          sessionID: "ses_fixture",
           progress: async () => {},
         })
         const result = JSON.parse(output.content)
@@ -173,5 +177,43 @@ test("delegate requires terminal output from Claude, Gemini, and Codex despite e
     }
   } finally {
     await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("delegate scrubs the harness environment and runs in the calling session workspace", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-env-"))
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "switchboard-workspace-"))
+  process.env.SWITCHBOARD_TEST_SECRET = "must-not-leak"
+  try {
+    const command = path.join(directory, "claude-fixture")
+    let delegate
+    await plugin.setup({
+      options: { harnesses: { claude: { command } } },
+      location: { directory },
+      session: { get: async ({ sessionID }) => ({ location: { directory: sessionID === "ses_fixture" ? workspace : directory } }) },
+      skill: { transform: async (callback) => callback({ add: () => {} }) },
+      tool: {
+        transform: async (callback) => callback({
+          namespace: () => {},
+          add: (tool) => { if (tool.name === "delegate") delegate = tool },
+        }),
+      },
+    })
+    await writeFile(command, `#!${process.execPath}
+const result = JSON.stringify({ secret: process.env.SWITCHBOARD_TEST_SECRET ?? null, cwd: process.cwd(), home: Boolean(process.env.HOME) })
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", session_id: "c", result }))
+`)
+    await chmod(command, 0o700)
+    const output = await delegate.execute({ harness: "claude", prompt: "fixture", mode: "plan" }, {
+      sessionID: "ses_fixture",
+      progress: async () => {},
+    })
+    const result = JSON.parse(output.content)
+    assert.equal(result.status, "completed")
+    assert.deepEqual(JSON.parse(result.response), { secret: null, cwd: await realpath(workspace), home: true })
+  } finally {
+    delete process.env.SWITCHBOARD_TEST_SECRET
+    await rm(directory, { recursive: true, force: true })
+    await rm(workspace, { recursive: true, force: true })
   }
 })

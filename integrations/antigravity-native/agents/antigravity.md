@@ -1,7 +1,7 @@
 ---
 description: Google Antigravity engineering worker exposed as a native OpenCode subagent through Switchboard.
 mode: subagent
-model: openai/gpt-6.1-sol#high
+model: openai/gpt-6-luna#high
 steps: 10
 permissions:
   - action: "*"

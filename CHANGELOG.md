@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+- Pass harnesses an allowlisted environment instead of OpenCode's full environment; configurable per harness with `envAllowlist`.
+- Run delegations in the calling session's workspace rather than the plugin load location, and lock overlapping checkouts across sessions.
+- Refuse Antigravity and Gemini `full` (vendor permission bypass) unless an approved `executionProfile` launcher is configured.
+- Use GPT-6 Luna high for native wrappers; default the Claude wrapper to `claude-opus-5-5` and replace the nonexistent `claude-haiku-5-5` with `claude-haiku-4-5`.
 - Consolidate the Claude-native profile to `@claude` and `/claude` targeting `claude`; back up and remove the legacy `claude-code` duplicate on install.
 - Reject malformed or non-terminal Claude, Gemini, and Codex output even on exit `0`; retain protocol diagnostics and recognize explicit provider failures.
 - Keep timeout/cancellation SIGKILL escalation alive after the group leader exits, and wait for it before returning.
-- Use GPT-6.1 Sol high for native wrappers, with parent-overridable, task-based external model/effort policies and explicit selector retention on resume.
+- Use parent-overridable, task-based external model/effort policies and explicit selector retention on resume.
 - Forward Antigravity and Claude reasoning effort and report requested selectors; reject unsupported effort selections instead of ignoring them.
 - Fail Antigravity delegations on headless tool denials or invalid/blank terminal results even when the CLI exits `0`; preserve denied actions and protocol evidence.
 - Track stdout/stderr truncation separately and reject truncated terminal output.

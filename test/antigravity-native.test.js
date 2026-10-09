@@ -8,7 +8,7 @@ test("antigravity-native is a thin OpenCode subagent adapter", async () => {
   const agent = await read("../integrations/antigravity-native/agents/antigravity.md")
 
   assert.match(agent, /mode:\s*subagent/)
-  assert.match(agent, /model:\s*openai\/gpt-6\.1-sol#high/)
+  assert.match(agent, /model:\s*openai\/gpt-6-luna#high/)
   assert.match(agent, /harness: "antigravity"/)
   assert.match(agent, /action:\s*"\*"\s*\n\s*resource:\s*"\*"\s*\n\s*effect:\s*deny/)
   assert.match(agent, /action:\s*execute\s*\n\s*resource:\s*"\*"\s*\n\s*effect:\s*allow/)

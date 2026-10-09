@@ -9,8 +9,23 @@ import {
 
 const options = normalizeOptions()
 
+test("Antigravity full mode requires an approved execution profile", () => {
+  assert.throws(
+    () => buildInvocation(getHarness("antigravity", options), { prompt: "do work", mode: "full" }),
+    /full mode requires an approved execution profile/,
+  )
+  const unapproved = normalizeOptions({
+    executionProfiles: { vetted: { approved: false, command: "/usr/bin/env", args: [] } },
+    harnesses: { antigravity: { executionProfile: "vetted" } },
+  })
+  assert.throws(() => getHarness("antigravity", unapproved), /execution profile is not approved: vetted/)
+})
+
 test("Antigravity builds a resumable full invocation", () => {
-  const harness = getHarness("antigravity", options)
+  const harness = getHarness("antigravity", normalizeOptions({
+    executionProfiles: { vetted: { approved: true, command: "/usr/bin/env", args: [] } },
+    harnesses: { antigravity: { executionProfile: "vetted" } },
+  }))
   const invocation = buildInvocation(harness, {
     prompt: "do work",
     mode: "full",
@@ -77,7 +92,7 @@ test("Antigravity and Claude preserve native model/effort selectors on new and r
     ["antigravity", "gemini-3.8-flash-medium", "medium"],
     ["claude", "claude-sonnet-5-5", "xhigh"],
     ["claude", "claude-opus-5-5", "high"],
-    ["claude", "claude-haiku-5-5", "high"],
+    ["claude", "claude-opus-5-5", "xhigh"],
   ]
   for (const [id, model, effort] of pairs) {
     for (const sessionID of [undefined, "retained-session"]) {

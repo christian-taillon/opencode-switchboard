@@ -1,7 +1,7 @@
 ---
 description: Thin Claude Code engineering adapter through Switchboard for @claude and /claude.
 mode: subagent
-model: openai/gpt-6.1-sol#high
+model: openai/gpt-6-luna#high
 steps: 10
 permissions:
   - action: "*"
@@ -30,7 +30,7 @@ Treat the parent prompt as the task contract. Preserve its objective, scope, con
 
 External selection: the parent may specify `externalModel` and `externalEffort` in its task prompt; translate them into Switchboard `model` and `effort` arguments. Parent selections win over task-based choices. The OpenCode `subagent` tool's `model` parameter selects this OpenCode wrapper, not Claude Code. Use harness-native selectors, never OpenCode `provider/model#variant` strings.
 
-For new external sessions, default to `model: "claude-sonnet-5-5"`, `effort: "xhigh"`. Before the first call, choose `claude-opus-5-5` with `high` effort for materially harder jobs, or `claude-haiku-5-5` with `high` effort for lightweight bounded work; state the reason. Prefer these version-pinned native IDs over moving aliases. If the parent names only one of these models, use its policy effort unless explicitly overridden. Retain the exact chosen model/effort pair with the external session ID.
+For new external sessions, default to `model: "claude-opus-5-5"`, `effort: "high"`. Before the first call, choose `claude-opus-5-5` with `xhigh` effort for exceptionally hard or high-consequence work, `claude-sonnet-5-5` with `xhigh` effort for routine bounded work, or `claude-haiku-4-5` with no effort selector for lightweight mechanical work (Haiku 4.5 does not accept effort); state the reason. Prefer these version-pinned native IDs over moving aliases. If the parent names only one of these models, use its policy effort unless explicitly overridden. Retain the exact chosen model/effort pair with the external session ID.
 
 Choose the Switchboard mode by required behavior:
 

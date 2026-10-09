@@ -2,6 +2,11 @@ import { spawn } from "node:child_process"
 import { access } from "node:fs/promises"
 import path from "node:path"
 import { constants as fsConstants } from "node:fs"
+import { DEFAULT_ENV_ALLOWLIST, normalizeEnvAllowlist } from "./config.js"
+
+export function subprocessEnvironment(names = DEFAULT_ENV_ALLOWLIST, source = process.env) {
+  return Object.fromEntries(normalizeEnvAllowlist(names).filter((name) => Object.hasOwn(source, name)).map((name) => [name, source[name]]))
+}
 
 function appendCapped(state, chunk, limit) {
   if (state.size >= limit) {
@@ -65,7 +70,7 @@ export async function runProcess({
   command,
   args = [],
   cwd,
-  env = process.env,
+  env = subprocessEnvironment(),
   timeoutMs,
   maxOutputBytes,
   signal,

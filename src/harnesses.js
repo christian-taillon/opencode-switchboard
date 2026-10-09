@@ -260,14 +260,24 @@ export function getHarness(id, options) {
   const definition = DEFINITIONS[id]
   const configured = options.harnesses[id]
   if (!configured?.enabled) throw new Error(`harness is disabled: ${id}`)
+  const profileID = configured.executionProfile
+  const profile = profileID === undefined ? undefined : options.executionProfiles[profileID]
+  if (profileID !== undefined && !profile) throw new Error(`unknown execution profile: ${profileID}`)
+  if (profile && profile.approved !== true) throw new Error(`execution profile is not approved: ${profileID}`)
   return {
     ...definition,
     command: configured.command ?? definition.command,
+    executionProfile: profileID ?? "host",
+    profile,
+    envAllowlist: configured.envAllowlist,
   }
 }
 
 export function buildInvocation(harness, input) {
   const mode = normalizeMode(input.mode)
+  if (mode === "full" && ["antigravity", "gemini"].includes(harness.id) && !harness.profile) {
+    throw new Error(`${harness.label} full mode requires an approved execution profile`)
+  }
   const payload = { ...input, mode }
   return {
     mode,
@@ -296,6 +306,7 @@ export function harnessDefinitions(options) {
       label: definition.label,
       command: configured.command ?? definition.command,
       enabled: configured.enabled,
+      executionProfile: configured.executionProfile ?? "host",
       resume: definition.resume,
       installHint: definition.installHint,
     }

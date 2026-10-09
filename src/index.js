@@ -9,8 +9,8 @@ import {
   parseHarnessOutput,
 } from "./harnesses.js"
 import { buildWorkerPrompt } from "./prompt.js"
-import { findExecutable, runProcess } from "./runner.js"
-import { resolveWorkingDirectory } from "./workspace.js"
+import { findExecutable, runProcess, subprocessEnvironment } from "./runner.js"
+import { acquireWorkspaceLock, resolveWorkspace } from "./workspace.js"
 
 const SKILL_LOCATION = fileURLToPath(new URL("../skills/switchboard/SKILL.md", import.meta.url))
 
@@ -42,8 +42,6 @@ export default Plugin.define({
   async setup(ctx) {
     const options = normalizeOptions(ctx.options)
     const skillMarkdown = await readFile(SKILL_LOCATION, "utf8")
-    const projectRoot = ctx.location.directory
-    const mutating = new Map()
 
     await ctx.skill.transform((editor) => {
       editor.add({
@@ -150,7 +148,7 @@ export default Plugin.define({
               type: "string",
               minLength: 1,
               description:
-                "Optional project-relative or absolute subdirectory. It must resolve inside the OpenCode project root.",
+                "Optional session-workspace-relative or absolute subdirectory. It must resolve inside the calling session's workspace.",
             },
           },
           required: ["harness", "prompt"],
@@ -165,6 +163,7 @@ export default Plugin.define({
           } catch (error) {
             return failure(input.harness, error.message, selection)
           }
+          const profile = { executionProfile: harness.executionProfile }
 
           const executable = await findExecutable(harness.command)
           if (!executable) {
@@ -174,11 +173,14 @@ export default Plugin.define({
             })
           }
 
-          let cwd
+          let workspace
           let invocation
           let prompt
+          let launchCommand = executable
+          let launchArgs
           try {
-            cwd = await resolveWorkingDirectory(projectRoot, input.workingDirectory)
+            const session = await ctx.session.get({ sessionID: context.sessionID })
+            workspace = await resolveWorkspace(session, input.workingDirectory)
             const requestedMode = input.mode ?? "edit"
             prompt = buildWorkerPrompt(input.prompt, requestedMode)
             invocation = buildInvocation(harness, {
@@ -189,20 +191,23 @@ export default Plugin.define({
               effort: input.effort,
               timeoutSeconds: resolveTimeoutSeconds(input.timeoutSeconds, options),
             })
+            launchArgs = invocation.args
+            if (harness.profile) {
+              launchCommand = await findExecutable(harness.profile.command)
+              if (!launchCommand) throw new Error(`execution profile launcher not found: ${harness.executionProfile}`)
+              launchArgs = [...harness.profile.args.map((arg) => arg.replaceAll("{cwd}", workspace.cwd)),
+                "--", executable, ...invocation.args]
+            }
           } catch (error) {
-            return failure(harness.id, error.message, selection)
+            return failure(harness.id, error.message, { ...profile, ...selection })
           }
 
-          if (invocation.mode !== "plan" && mutating.has(cwd)) {
-            const active = mutating.get(cwd)
-            return failure(
-              harness.id,
-              `another mutating Switchboard delegation is already running in ${cwd}`,
-              { activeHarness: active, ...selection },
-            )
+          let release
+          try {
+            if (invocation.mode !== "plan") release = acquireWorkspaceLock(workspace.lockDirectory, harness.id)
+          } catch (error) {
+            return failure(harness.id, error.message, { activeHarness: error.activeHarness, ...profile, ...selection })
           }
-
-          if (invocation.mode !== "plan") mutating.set(cwd, harness.id)
           const timeoutSeconds = resolveTimeoutSeconds(input.timeoutSeconds, options)
 
           try {
@@ -211,9 +216,10 @@ export default Plugin.define({
             })
 
             const execution = await runProcess({
-              command: executable,
-              args: invocation.args,
-              cwd,
+              command: launchCommand,
+              args: launchArgs,
+              cwd: workspace.cwd,
+              env: subprocessEnvironment(harness.envAllowlist),
               timeoutMs: timeoutSeconds * 1000,
               maxOutputBytes: options.maxOutputBytes,
               signal: context.signal,
@@ -242,6 +248,7 @@ export default Plugin.define({
               status,
               harness: harness.id,
               mode: invocation.mode,
+              ...profile,
               ...selection,
               sessionID: parsed.sessionID,
               response: parsed.response,
@@ -260,9 +267,7 @@ export default Plugin.define({
               error,
             })
           } finally {
-            if (invocation.mode !== "plan" && mutating.get(cwd) === harness.id) {
-              mutating.delete(cwd)
-            }
+            release?.()
           }
         },
       })

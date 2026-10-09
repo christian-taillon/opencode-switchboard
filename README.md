@@ -54,16 +54,16 @@ The maintained agent examples are already in the repository:
 - [Antigravity template](integrations/antigravity-native/agents/antigravity.md) · [install/uninstall](integrations/antigravity-native/README.md)
 - [Claude template](integrations/claude-native/agents/claude.md) · [install/uninstall](integrations/claude-native/README.md)
 
-Wrappers require access to `openai/gpt-6.1-sol#high`, or changing the installed agent's `model` line to an available OpenCode model. This provider requirement does not apply to generic Switchboard use.
+Wrappers require access to `openai/gpt-6-luna#high`, or changing the installed agent's `model` line to an available OpenCode model. This provider requirement does not apply to generic Switchboard use.
 
 The Claude installer backs up and removes the legacy `claude-code` duplicate. Follow the [migration notes](integrations/claude-native/README.md#keep-only-claude) to update parent routing and permissions.
 
-The native wrappers use `openai/gpt-6.1-sol#high` to select and forward work; the external harness performs the task. Their prompt-level model policy is:
+The native wrappers use `openai/gpt-6-luna#high` to select and forward work; the external harness performs the task. Their prompt-level model policy is:
 
 | Harness | Default | Task-based alternatives |
 | --- | --- | --- |
 | Antigravity | `gemini-3.8-flash-medium`, `medium` effort | Flash Low/`low` for lightweight work; Flash High/`high` for harder reasoning |
-| Claude Code | `claude-sonnet-5-5`, `xhigh` effort | `claude-opus-5-5`/`high` for harder jobs; `claude-haiku-5-5`/`high` for lightweight work |
+| Claude Code | `claude-opus-5-5`, `high` effort | `claude-opus-5-5`/`xhigh` for exceptional work; `claude-sonnet-5-5`/`xhigh` for routine work; `claude-haiku-4-5` without effort for lightweight work |
 
 Parents can supply `externalModel` and `externalEffort` in the native subagent's task prompt. Explicit selections win; otherwise the wrapper chooses before starting and retains that pair on resume. The native OpenCode subagent tool's `model` argument changes the wrapper model, not the external harness. Unavailable selections are reported, not silently replaced. Future models are not selected until available and verified.
 
@@ -135,7 +135,7 @@ The outer `execute` permission does not bypass nested tool checks. The shipped w
 | `edit` | Normal file edits | Allows edits while keeping conservative harness permissions |
 | `full` | Bounded implementation that must run commands non-interactively | Uses the harness's non-interactive/full-approval mode |
 
-`edit` is the default. Antigravity and Gemini `full` bypass vendor approval: require explicit authorization for that bypass, not just permission to run tests. Modes are vendor workflow controls, not OS isolation.
+`edit` is the default. Antigravity and Gemini `full` bypass vendor approval, so Switchboard refuses them unless the harness is configured with an approved execution profile; also require explicit authorization for that bypass, not just permission to run tests. Modes are vendor workflow controls, not OS isolation.
 
 Mode mapping in v0.0.1:
 
@@ -204,11 +204,12 @@ Switchboard deliberately uses direct process spawning rather than a shell:
 - OpenCode cancellation is forwarded to the external process;
 - timeout or cancellation sends SIGTERM to the Linux process group, then SIGKILL after a 500 ms grace period; completion waits for escalation even if the group leader exits first;
 - required work is always foreground in v0.0.1;
-- overlapping mutating delegates to the same working directory are rejected.
+- harnesses receive only allowlisted environment variables (default `PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR`), so OpenCode's credentials and tokens are not inherited;
+- overlapping mutating delegates to the same checkout or overlapping directories are rejected.
 
 External harnesses are a separate execution and security boundary. Switchboard spawns the vendor CLI directly, so OpenCode shell hooks, shell-command permission wrappers, Git identity guards, and other behavior attached specifically to OpenCode's own shell tool do not automatically apply to commands an external harness executes. Configure each vendor harness, its permissions, and its Git identity independently.
 
-A custom `workingDirectory` must resolve inside the OpenCode project root. This prevents a delegated tool call from silently switching Switchboard to an unrelated checkout.
+Delegations run in the calling session's workspace. A custom `workingDirectory` must resolve inside that workspace. This prevents a delegated tool call from silently switching Switchboard to an unrelated checkout.
 
 ## Configuration
 
@@ -230,6 +231,9 @@ For optional overrides, use the plugin object form with `package` and `options` 
 | `maxOutputBytes` | `8388608` per output stream |
 | `harnesses.<id>.enabled` | `true` |
 | `harnesses.<id>.command` | `agy`, `claude`, `gemini`, or `codex` |
+| `harnesses.<id>.envAllowlist` | `PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR` |
+| `harnesses.<id>.executionProfile` | unset (`host`); names an entry in `executionProfiles` |
+| `executionProfiles.<id>` | `{ approved, command, args }`; an absolute launcher that wraps the harness, with `{cwd}` substituted in `args` |
 
 `command` is an executable name or path, not a shell string. `enabled: false` disables that harness for all callers of this plugin instance, including wrappers.
 
