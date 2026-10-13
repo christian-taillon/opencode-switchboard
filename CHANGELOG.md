@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add opt-in Dungeon execution profiles: guest executable discovery, verified Ready/copy admission, bounded machine-stream decoding, durable environment-bound resume, and reuse blocking after uncertain cleanup. Preserve manual lifecycle/export and host defaults.
+
+- Fail Claude delegations on native permission denials even with exit `0` and subtype `success`; preserve denied actions and vendor-reported `modelUsage` metadata.
 - Native installers reuse a Switchboard plugin already listed in `opencode.json` instead of copying a second backend into the auto-discovered `plugins/` directory.
 - Pass harnesses an allowlisted environment instead of OpenCode's full environment; configurable per harness with `envAllowlist`.
 - Run delegations in the calling session's workspace rather than the plugin load location, and lock overlapping checkouts across sessions.

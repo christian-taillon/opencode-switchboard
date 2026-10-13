@@ -117,7 +117,7 @@ setInterval(() => {}, 1000)
           const readyDeadline = Date.now() + 3000
           while (!pid && Date.now() < readyDeadline) {
             try { pid = Number(await readFile(pidfile, "utf8")) } catch (error) {
-              if (error.code !== "ENOENT") throw error
+              if (!["ENOENT", "ESRCH"].includes(error.code)) throw error
             }
             if (!pid) await delay(10)
           }
@@ -134,7 +134,7 @@ setInterval(() => {}, 1000)
               const stat = await readFile(`/proc/${pid}/stat`, "utf8")
               alive = !["Z", "X"].includes(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0])
             } catch (error) {
-              if (error.code !== "ENOENT") throw error
+              if (!["ENOENT", "ESRCH"].includes(error.code)) throw error
               alive = false
             }
             if (alive) await delay(10)

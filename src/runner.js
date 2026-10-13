@@ -74,6 +74,9 @@ export async function runProcess({
   timeoutMs,
   maxOutputBytes,
   signal,
+  terminationTarget = "group",
+  terminationGraceMs = 500,
+  onStdout,
 }) {
   const stdout = { chunks: [], size: 0, truncated: false }
   const stderr = { chunks: [], size: 0, truncated: false }
@@ -85,17 +88,24 @@ export async function runProcess({
     let killHandle
     let termination = undefined
     let pendingResult
+    let exited = false
+    let closeHandle
+    let forcedTermination = false
+    let spawned = false
+    let streamError
+    const onAbort = () => beginTermination("aborted")
 
     const finish = (result) => {
       if (settled) return
       // The group may outlive its leader and close the captured pipes early.
-      if (killHandle) {
+      if (killHandle && terminationTarget === "group") {
         pendingResult = result
         return
       }
       settled = true
       clearTimeout(timeoutHandle)
       clearTimeout(killHandle)
+      clearTimeout(closeHandle)
       signal?.removeEventListener("abort", onAbort)
       resolve({
         ...result,
@@ -105,9 +115,14 @@ export async function runProcess({
         stderrTruncated: stderr.truncated,
         outputTruncated: stdout.truncated || stderr.truncated,
         durationMs: Date.now() - started,
+        ...(terminationTarget === "leader" ? { forcedTermination, spawned } : {}),
       })
     }
 
+    if (signal?.aborted) {
+      finish({ status: "aborted", exitCode: null, signal: null })
+      return
+    }
     let child
     try {
       child = spawn(command, args, {
@@ -121,30 +136,46 @@ export async function runProcess({
       return
     }
 
-    child.stdout?.on("data", (chunk) => appendCapped(stdout, chunk, maxOutputBytes))
+    child.stdout?.on("data", (chunk) => {
+      if (!onStdout) appendCapped(stdout, chunk, maxOutputBytes)
+      else {
+        try { onStdout(chunk) } catch (error) {
+          streamError ??= error.message
+          beginTermination("failed")
+        }
+      }
+    })
     child.stderr?.on("data", (chunk) => appendCapped(stderr, chunk, maxOutputBytes))
 
     const beginTermination = (kind) => {
       if (termination) return
       termination = kind
       try {
-        terminate(child, "SIGTERM")
+        if (terminationTarget === "leader") { if (!exited) child.kill("SIGTERM") }
+        else terminate(child, "SIGTERM")
       } catch (error) {
         finish({ status: kind, exitCode: null, signal: null, error: error.message })
         return
       }
       killHandle = setTimeout(() => {
         try {
-          terminate(child, "SIGKILL")
+          if (terminationTarget === "leader") {
+            if (!exited) { forcedTermination = true; child.kill("SIGKILL") }
+          } else terminate(child, "SIGKILL")
         } catch {
           // The process may already be gone.
         }
         killHandle = undefined
-        if (pendingResult) finish(pendingResult)
-      }, 500)
+        if (terminationTarget === "leader") {
+          if (exited) return
+          child.stdout?.destroy()
+          child.stderr?.destroy()
+          finish({ status: kind, exitCode: null, signal: null,
+            error: streamError ?? "Dungeon did not complete within its cleanup grace; cleanup is unconfirmed" })
+        } else if (pendingResult) finish(pendingResult)
+      }, terminationGraceMs)
     }
 
-    const onAbort = () => beginTermination("aborted")
     if (signal?.aborted) onAbort()
     else signal?.addEventListener("abort", onAbort, { once: true })
 
@@ -154,10 +185,23 @@ export async function runProcess({
     child.on("error", (error) => {
       finish({ status: termination ?? "failed", exitCode: null, signal: null, error: error.message })
     })
+    child.once("spawn", () => { spawned = true })
+
+    child.on("exit", () => {
+      exited = true
+      if (terminationTarget === "leader") {
+        closeHandle = setTimeout(() => {
+          child.stdout?.destroy()
+          child.stderr?.destroy()
+          finish({ status: termination ?? "failed", exitCode: null, signal: null,
+            error: "Dungeon output pipes did not close; cleanup is unconfirmed" })
+        }, 2000)
+      }
+    })
 
     child.on("close", (code, closeSignal) => {
       const status = termination ?? (code === 0 ? "completed" : "failed")
-      finish({ status, exitCode: code, signal: closeSignal, error: undefined })
+      finish({ status, exitCode: code, signal: closeSignal, error: streamError })
     })
   })
 }
