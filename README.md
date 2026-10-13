@@ -11,7 +11,7 @@ Version `0.0.1` targets Linux and supports:
 
 The plugin exposes two OpenCode tools:
 
-- `switchboard_harnesses`: discover configured harnesses and whether their executables are on `PATH`.
+- `switchboard_harnesses`: discover configured harnesses and executable availability on the host or selected guest.
 - `switchboard_delegate`: run one bounded harness task synchronously and return a normalized terminal result.
 
 It also registers the `switchboard` skill. Agent prompt awareness is opt-in through `awareAgents`; Switchboard does not assume any agent names or external OpenCode configuration.
@@ -192,6 +192,8 @@ Provider-native status and usage are preserved when the harness exposes them. `s
 
 Antigravity results with denied tools, invalid JSON, a missing status, or a blank `SUCCESS` response are `failed` even when the process exits `0`. `deniedActions` preserves the vendor's `denied_actions`; `protocolError` and `rawOutput` retain malformed or incomplete result evidence. Truncated stdout cannot establish completion. `stdoutTruncated` and `stderrTruncated` distinguish terminal-output loss from diagnostic-output loss; `outputTruncated` covers either.
 
+Claude results with nonempty `permission_denials` are also `failed`, even with exit `0` and subtype `success`. `deniedActions` preserves those native entries, including `tool_name`, `tool_use_id`, and `tool_input`; the worker response and session ID remain available. Optional `modelUsage` preserves Claude's vendor-reported per-model usage and canonical model metadata. On resume it is session-cumulative; do not sum it across calls. It is evidence separate from `requestedModel`, not verification of resolved effort.
+
 Other harnesses also require a valid terminal result and nonblank response: Claude's `result`/`success`, Gemini's JSON `response`, or Codex's completed agent message followed by `turn.completed`. Malformed or incomplete output fails even with exit `0`.
 
 ## Task envelope
@@ -239,9 +241,105 @@ For optional overrides, use the plugin object form with `package` and `options` 
 | `harnesses.<id>.command` | `agy`, `claude`, `gemini`, or `codex` |
 | `harnesses.<id>.envAllowlist` | `PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR` |
 | `harnesses.<id>.executionProfile` | unset (`host`); names an entry in `executionProfiles` |
-| `executionProfiles.<id>` | `{ approved, command, args }`; an absolute launcher that wraps the harness, with `{cwd}` substituted in `args` |
+| `executionProfiles.<id>` | Launcher `{ approved, command, args }` (optional `type: "launcher"`), or Dungeon `{ type: "dungeon", approved, command, config }`; absolute trusted paths |
 
 `command` is an executable name or path, not a shell string. `enabled: false` disables that harness for all callers of this plugin instance, including wrappers.
+
+### Optional Dungeon execution
+
+**Existing integration; disposable Claude and guest-native OpenCode workflows validated.** [Dungeon](https://github.com/Dark-Roast-Cyber/dungeon)
+and OpenShell own isolation and policy; Switchboard still owns vendor prompts,
+modes and result parsing. Use a source-built Dungeon with Unix-stream-socket,
+`copy_baseline_valid`, terminal `cleanup` and `primary_transport_verified` support
+from this integration.
+Older binaries are refused; matching `0.0.2` version text alone is insufficient.
+
+Provision a dedicated, pinned-image **copy-mode** environment explicitly. Review
+project contents and policy before `up --yes`; complete vendor login in the guest.
+Then select the private configuration in trusted plugin options:
+
+```jsonc
+{
+  "plugins": [{
+    "package": "/absolute/path/to/switchboard",
+    "options": {
+      "executionProfiles": {
+        "isolated": {
+          "type": "dungeon",
+          "approved": true,
+          "command": "/absolute/path/to/source-built/dungeon",
+          "config": "/private/task/dungeon.json"
+        }
+      },
+      "harnesses": { "claude": { "executionProfile": "isolated" } }
+    }
+  }]
+}
+```
+
+- The canonical configured project must equal the calling session workspace.
+  `workingDirectory: "sub"` maps to `/sandbox/project/sub`. **The whole copied
+  project remains accessible**; cwd and vendor plan mode are not read-only storage.
+- Only verified Ready/copy environments with a valid upload baseline are admitted.
+  Discovery checks executables in the guest, not the host. Guest image/auth/network
+  prerequisites remain operator-owned; other vendors are not provisioned for you.
+- Every call, including plan and discovery, serializes against overlapping
+  Switchboard work. An exclusively created host record in the private config
+  directory prevents simultaneous processes from using the same sandbox/config.
+  Separately copied configs and independent guest writers require operator
+  coordination; this is cooperative admission, not a distributed lease.
+  Known pre-spawn failures and pre-cancelled calls do not leave an admission block.
+- Vendor session IDs are durably bound to the harness, config, project, fingerprint,
+  sandbox ID and guest cwd. Bindings cannot be reassigned; unknown/mismatched
+  resumes refuse. IDs are exposed only after verified transport/cleanup and
+  persistence. Environment stop/start preserves the binding; replacement does not.
+- Timeout/cancellation signals the Dungeon leader and allows up to 20 seconds for
+  cleanup. Dungeon output is decoded incrementally with bounded retained bytes.
+  `dungeon.cleanup` is `confirmed`, `not_started` or `unconfirmed`; confirmation
+  covers cooperative owned-group lifecycle only, not group escapes or same-UID
+  interference. Failed primary transport is conservatively treated as unconfirmed;
+  cancellation can still confirm cleanup with verified primary exit/control removal.
+- A private admission record blocks reuse after unconfirmed cleanup or a parent
+  crash; `dungeon.admissionRecord` identifies its path. Recover the old work
+  explicitly, then provision a new environment identity.
+  There is no automatic unlock or retry with host execution.
+- `dungeon.hostChangesApplied: false` means edits stay guest-only. Switchboard
+  never creates, starts, uploads, exports or stops the environment automatically.
+  Use Dungeon's separate reviewed export after quiescing guest/host writers.
+- `approved: true` is operator configuration, not OS attestation or a grant of
+  additional vendor tool permissions. Headless approval denials remain failures;
+  review scoped guest settings instead of retrying with broader modes.
+
+**Native `@code` is separate.** It uses OpenCode tools, not Codex/Switchboard, and
+remains host-native in a host session. For contained native work, run guest OpenCode
+through Dungeon's [authenticated remote connection workflow](https://github.com/Dark-Roast-Cyber/dungeon/blob/main/docs/integrations.md).
+Select/configure the guest's agents and authentication explicitly. A host child
+session or a Switchboard profile does not relocate native OpenCode tools.
+Disposable validation used a guest-native `code` child with exact read/edit/command
+permissions and an independently matched guest identity; it does not establish
+transparent containment of host-native agents.
+The buffered-cancellation correction passed fresh disposable high-output cancellation
+and clean-relaunch checks on 2026-10-11. Contained Antigravity 1.3.3 guest discovery,
+edit and external-session resume also passed, but its test runner failed to open
+`/dev/ptmx` under the reviewed policy. An independently launched guest test passed;
+this is **not** a complete Antigravity edit/test gate. Vendor `SUCCESS` did not
+establish that the requested test ran. See Dungeon's
+[revision-qualified validation](https://github.com/Dark-Roast-Cyber/dungeon/blob/main/docs/validation.md).
+
+### Native Antigravity sandbox experiment
+
+**Validated observation; partial acceptance.** A separate host pilot with Antigravity
+1.3.3, `--sandbox` and temporarily approved `toolPermission: "proceed-in-sandbox"`
+completed a synthetic edit, Node test and same-conversation resume. Shell reads and
+writes to an unmounted outside path were sandbox-blocked; native file tools were
+denied by permissions, not proven enclosed by the terminal sandbox. A network probe
+returned HTTP 403, but its origin was not established, so network enforcement remains
+unproven. Requested effort was not emitted in vendor metadata.
+
+Original settings were restored and synthetic fixtures removed. Switchboard does
+not add `--sandbox` or enable sandbox auto-approval. The [native terminal sandbox](https://antigravity.google/docs/sandbox/)
+is distinct from Dungeon's outer guest boundary; this pilot does not establish
+nested compatibility or justify changing defaults.
 
 ## Harness prerequisites
 

@@ -114,7 +114,7 @@ process.stderr.write(${JSON.stringify(notice)})
   }
 })
 
-test("delegate requires terminal output from Claude, Gemini, and Codex despite exit zero", async () => {
+test("delegate requires terminal output and rejects Claude permission denials despite exit zero", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-terminal-"))
   try {
     const command = path.join(directory, "harness-fixture")
@@ -173,6 +173,36 @@ test("delegate requires terminal output from Claude, Gemini, and Codex despite e
           if (status === "completed") assert.equal(result.response, "done")
           else assert.ok(result.error)
         }
+      }
+    }
+    const deniedActions = [{
+      tool_name: "Bash", tool_use_id: "denied-tool",
+      tool_input: { command: "node -e \"console.log('probe')\"" },
+    }]
+    const modelUsage = { "claude-haiku-4-5": { canonicalModel: "claude-haiku-4-5", inputTokens: 18 } }
+    for (const permission_denials of [deniedActions, []]) {
+      const stdout = JSON.stringify({
+        type: "result", subtype: "success", is_error: false, session_id: "c-denied",
+        result: "worker response", permission_denials, modelUsage,
+      })
+      await writeFile(command, `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(stdout)})\n`)
+      const output = await delegate.execute({ harness: "claude", prompt: "fixture", mode: "plan" }, {
+        sessionID: "ses_fixture", progress: async () => {},
+      })
+      const result = JSON.parse(output.content)
+      assert.equal(result.exitCode, 0)
+      assert.equal(result.status, permission_denials.length ? "failed" : "completed")
+      assert.equal(result.providerStatus, "success")
+      assert.equal(result.sessionID, "c-denied")
+      assert.equal(result.response, "worker response")
+      assert.deepEqual(result.modelUsage, modelUsage)
+      assert.equal(result.protocolError, undefined)
+      if (permission_denials.length) {
+        assert.deepEqual(result.deniedActions, deniedActions)
+        assert.match(result.error, /Claude Code tools were denied: Bash/)
+      } else {
+        assert.equal(result.deniedActions, undefined)
+        assert.equal(result.error, undefined)
       }
     }
   } finally {

@@ -11,6 +11,7 @@ import {
 import { buildWorkerPrompt } from "./prompt.js"
 import { findExecutable, runProcess, subprocessEnvironment } from "./runner.js"
 import { acquireWorkspaceLock, resolveWorkspace } from "./workspace.js"
+import { dungeonKey, GUEST_DISCOVERY, inspectDungeon, persistDungeonSession, resumeBinding, runDungeonGuarded, sameResumeBinding } from "./dungeon.js"
 
 const SKILL_LOCATION = fileURLToPath(new URL("../skills/switchboard/SKILL.md", import.meta.url))
 
@@ -80,7 +81,7 @@ export default Plugin.define({
       editor.add({
         name: "harnesses",
         description:
-          "List Switchboard harnesses and report which CLI executables are currently available on PATH. Use this before delegation when availability is uncertain.",
+          "List Switchboard harnesses and check executable availability on the host or in the configured Dungeon guest. Guest discovery requires an already Ready approved environment. Use this before delegation when availability is uncertain.",
         input: {
           type: "object",
           properties: {},
@@ -89,12 +90,29 @@ export default Plugin.define({
         options: { namespace: "switchboard", codemode: true },
         execute: async (_input, context) => {
           await context.progress({ status: "Checking external coding harnesses" })
-          const rows = await Promise.all(
-            harnessDefinitions(options).map(async (harness) => ({
-              ...harness,
-              available: harness.enabled ? Boolean(await findExecutable(harness.command)) : false,
-            })),
-          )
+          const rows = []
+          for (const definition of harnessDefinitions(options)) {
+            const row = { ...definition, available: false }
+            let release
+            try {
+              const harness = getHarness(definition.id, options)
+              if (harness.profile?.type !== "dungeon") row.available = Boolean(await findExecutable(harness.command))
+              else {
+                const session = await ctx.session.get({ sessionID: context.sessionID })
+                const workspace = await resolveWorkspace(session)
+                release = acquireWorkspaceLock(workspace.lockDirectory, harness.id)
+                const binding = await inspectDungeon(harness, workspace, context.signal)
+                const result = await runDungeonGuarded({ harness, binding,
+                  args: ["/usr/bin/node", "-e", GUEST_DISCOVERY, "--", harness.command],
+                  timeoutMs: 10000, maxOutputBytes: 1024, signal: context.signal })
+                row.availabilityScope = "guest"
+                row.available = result.status === "completed" && !result.outputTruncated && JSON.parse(result.stdout).available === true
+                row.error = result.error
+              }
+            } catch (error) { row.error = error.message }
+            finally { release?.() }
+            rows.push(row)
+          }
           return jsonContent({ platform: process.platform, harnesses: rows })
         },
       })
@@ -165,7 +183,8 @@ export default Plugin.define({
           }
           const profile = { executionProfile: harness.executionProfile }
 
-          const executable = await findExecutable(harness.command)
+          const isDungeon = harness.profile?.type === "dungeon"
+          const executable = isDungeon ? harness.command : await findExecutable(harness.command)
           if (!executable) {
             return failure(harness.id, `CLI executable not found: ${harness.command}`, {
               installHint: harness.installHint,
@@ -178,6 +197,7 @@ export default Plugin.define({
           let prompt
           let launchCommand = executable
           let launchArgs
+          let binding
           try {
             const session = await ctx.session.get({ sessionID: context.sessionID })
             workspace = await resolveWorkspace(session, input.workingDirectory)
@@ -192,7 +212,7 @@ export default Plugin.define({
               timeoutSeconds: resolveTimeoutSeconds(input.timeoutSeconds, options),
             })
             launchArgs = invocation.args
-            if (harness.profile) {
+            if (harness.profile && !isDungeon) {
               launchCommand = await findExecutable(harness.profile.command)
               if (!launchCommand) throw new Error(`execution profile launcher not found: ${harness.executionProfile}`)
               launchArgs = [...harness.profile.args.map((arg) => arg.replaceAll("{cwd}", workspace.cwd)),
@@ -204,18 +224,30 @@ export default Plugin.define({
 
           let release
           try {
-            if (invocation.mode !== "plan") release = acquireWorkspaceLock(workspace.lockDirectory, harness.id)
+            if (isDungeon || invocation.mode !== "plan") release = acquireWorkspaceLock(workspace.lockDirectory, harness.id)
           } catch (error) {
             return failure(harness.id, error.message, { activeHarness: error.activeHarness, ...profile, ...selection })
           }
           const timeoutSeconds = resolveTimeoutSeconds(input.timeoutSeconds, options)
 
           try {
+            if (isDungeon) {
+              binding = await inspectDungeon(harness, workspace, context.signal)
+              if (input.sessionID) {
+                const stored = await ctx.storage.get(dungeonKey("session", [harness.id, input.sessionID]))
+                if (!sameResumeBinding(stored, resumeBinding(harness, binding))) {
+                  throw new Error("Dungeon resume session is unknown or bound to another environment/project/cwd")
+                }
+              }
+            }
             await context.progress({
               status: `Delegating to ${harness.label} (${invocation.mode})`,
             })
 
-            const execution = await runProcess({
+            const execution = isDungeon ? await runDungeonGuarded({
+              harness, binding, args: [harness.command, ...invocation.args],
+              timeoutMs: timeoutSeconds * 1000, maxOutputBytes: options.maxOutputBytes, signal: context.signal,
+            }) : await runProcess({
               command: launchCommand,
               args: launchArgs,
               cwd: workspace.cwd,
@@ -228,6 +260,20 @@ export default Plugin.define({
             const parsed = parseHarnessOutput(harness, execution.stdout, {
               truncated: execution.stdoutTruncated,
             })
+            if (isDungeon && parsed.sessionID) {
+              if (execution.dungeon.cleanup !== "confirmed" || execution.dungeon.transportError ||
+                  execution.dungeon.protocolError || parsed.protocolError) {
+                delete parsed.sessionID
+              } else {
+                try {
+                  await persistDungeonSession(ctx.storage, harness, binding, parsed.sessionID)
+                } catch (error) {
+                  delete parsed.sessionID
+                  execution.status = "failed"
+                  execution.error = `Dungeon session binding could not be persisted: ${error.message}`
+                }
+              }
+            }
             const providerFailed = parsed.providerFailed === true || Boolean(parsed.protocolError)
             const status =
               execution.status === "completed" && providerFailed ? "failed" : execution.status
@@ -250,6 +296,9 @@ export default Plugin.define({
               mode: invocation.mode,
               ...profile,
               ...selection,
+              ...(isDungeon ? { dungeon: { ...execution.dungeon, config: binding.config,
+                fingerprint: binding.fingerprint, project: binding.project, guestCwd: binding.guestCwd,
+                projectTransfer: "copy", hostChangesApplied: false } } : {}),
               sessionID: parsed.sessionID,
               response: parsed.response,
               providerStatus: parsed.providerStatus,
@@ -257,6 +306,7 @@ export default Plugin.define({
               protocolError: parsed.protocolError,
               rawOutput: parsed.rawOutput,
               usage: parsed.usage,
+              modelUsage: parsed.modelUsage,
               exitCode: execution.exitCode,
               signal: execution.signal,
               durationMs: execution.durationMs,
@@ -266,6 +316,8 @@ export default Plugin.define({
               outputTruncated: execution.outputTruncated,
               error,
             })
+          } catch (error) {
+            return failure(harness.id, error.message, { ...profile, ...selection })
           } finally {
             release?.()
           }

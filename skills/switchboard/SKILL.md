@@ -26,13 +26,15 @@ Switchboard v0.0.1 runs delegations synchronously. If the current outcome depend
 
 Retain the returned external `sessionID` until that bounded outcome is accepted or abandoned. Resume the same harness and `sessionID` only after the prior call has returned and only for a correction, clarification, or validation of the same outcome. Start a fresh external session for a materially different task, stale context, or intentionally independent reasoning. Codex resume is not supported in v0.0.1.
 
-Do not run overlapping mutating Switchboard delegates against the same working directory. Read-only `plan` delegations may run independently.
+Do not run overlapping mutating Switchboard delegates against the same working directory. Host `plan` delegations may run independently; Dungeon calls serialize even in plan mode. A guest cwd or vendor plan mode does not narrow the approved project's filesystem authority.
 
 ## After delegation
 
 Treat the harness response as evidence, not authority. Inspect important diffs and validation claims before accepting the work. Reconcile failures as implementation defects, task-envelope problems, missing CLI/authentication, permission-mode failures, timeouts, or genuine external blockers.
 
 A terminal Switchboard result reports status, harness, external `sessionID` when available, response, exit code, duration, stderr, usage when exposed by the harness, and truncation state.
+
+For a Dungeon profile, verify `dungeon.cleanup` and retain its environment binding for resume. Guest edits are not host edits (`hostChangesApplied: false`); lifecycle, reviewed export and guest approvals remain explicit. Unconfirmed cleanup blocks reuse—do not bypass it with host execution or a broader vendor mode. Native host agents are not contained by an external harness profile.
 
 ## Companion repositories
 

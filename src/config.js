@@ -34,12 +34,16 @@ export function normalizeOptions(raw = {}) {
   if (raw.executionProfiles !== undefined) {
     for (const [id, value] of Object.entries(object(raw.executionProfiles, "executionProfiles"))) {
       const profile = object(value, `executionProfiles.${id}`)
-      if (!id || typeof profile.approved !== "boolean" || typeof profile.command !== "string" ||
-          !path.isAbsolute(profile.command) || profile.command.includes("\0") || !Array.isArray(profile.args) ||
-          profile.args.some((arg) => typeof arg !== "string" || arg.includes("\0"))) {
+      const type = profile.type === undefined ? "launcher" : profile.type
+      if (!id || !["launcher", "dungeon"].includes(type) || typeof profile.approved !== "boolean" || typeof profile.command !== "string" ||
+          !path.isAbsolute(profile.command) || profile.command.includes("\0") ||
+          (type === "launcher" && (!Array.isArray(profile.args) || profile.args.some((arg) => typeof arg !== "string" || arg.includes("\0")))) ||
+          (type === "dungeon" && (typeof profile.config !== "string" || !path.isAbsolute(profile.config) || profile.config.includes("\0") || profile.args !== undefined))) {
         throw new Error(`malformed execution profile: ${id}`)
       }
-      executionProfiles[id] = { approved: profile.approved, command: profile.command, args: [...profile.args] }
+      executionProfiles[id] = type === "dungeon"
+        ? { type, approved: profile.approved, command: profile.command, config: profile.config }
+        : { type, approved: profile.approved, command: profile.command, args: [...profile.args] }
     }
   }
   if (raw.harnesses !== undefined) object(raw.harnesses, "harnesses")
