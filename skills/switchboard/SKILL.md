@@ -20,6 +20,12 @@ Treat a Switchboard harness as a bounded external worker, close to an OpenCode s
 5. Use `mode: plan` for read-only investigation or review, `mode: edit` for file edits with conservative harness permissions, and `mode: full` only when the bounded task requires non-interactive command execution and the parent has authority for that work.
 6. The parent may select harness-native `model` and `effort`. For native wrapper agents, put `externalModel` and `externalEffort` in the task prompt; the OpenCode subagent tool's `model` selects only the wrapper. Explicit parent selections override the wrapper's task-based defaults. Retain and resend the selected pair on same-task resume; report unavailable selections without silent fallback. Requested settings are not verified resolved settings.
 
+Name the owning engineering outcome and branch/PR in the task when applicable.
+A worker's completion, session, or commit is not a new PR boundary. Return related
+implementation, fixes, tests, and documentation to the parent for integration into
+that outcome. Follow the repository's split criteria and explicit lifecycle
+authority; do not create a worker PR or an integration-only PR by default.
+
 ## Foreground and sessions
 
 Switchboard v0.0.1 runs delegations synchronously. If the current outcome depends on a harness result, call `switchboard_delegate` and wait for its terminal result. Never return a handoff that merely says the external harness is still running.
@@ -27,10 +33,17 @@ Switchboard v0.0.1 runs delegations synchronously. If the current outcome depend
 Retain the returned external `sessionID` until that bounded outcome is accepted or abandoned. Resume the same harness and `sessionID` only after the prior call has returned and only for a correction, clarification, or validation of the same outcome. Start a fresh external session for a materially different task, stale context, or intentionally independent reasoning. Codex resume is not supported in v0.0.1.
 
 Do not run overlapping mutating Switchboard delegates against the same working directory. Read-only `plan` delegations may run independently.
+Independent concurrent writers require isolated worktrees and one integration
+owner; worktree isolation does not require a separate PR for every worker.
 
 ## After delegation
 
 Treat the harness response as evidence, not authority. Inspect important diffs and validation claims before accepting the work. Reconcile failures as implementation defects, task-envelope problems, missing CLI/authentication, permission-mode failures, timeouts, or genuine external blockers.
+
+The parent validates the combined revision against required integration and
+platform checks. Worker-local passes do not qualify a different final PR head.
+Preserve required signing, review, and merge approval; this guidance grants no
+additional Git or external-action authority.
 
 A terminal Switchboard result reports status, harness, external `sessionID` when available, response, exit code, duration, stderr, usage when exposed by the harness, and truncation state.
 
