@@ -12,6 +12,15 @@ import { buildWorkerPrompt } from "./prompt.js"
 import { findExecutable, runProcess, subprocessEnvironment } from "./runner.js"
 import { acquireWorkspaceLock, resolveWorkspace } from "./workspace.js"
 import { dungeonKey, GUEST_DISCOVERY, inspectDungeon, persistDungeonSession, resumeBinding, runDungeonGuarded, sameResumeBinding } from "./dungeon.js"
+import {
+  createModelCatalog,
+  MODEL_LIST_MAX_OUTPUT_BYTES,
+  MODEL_LIST_TIMEOUT_MS,
+  modelsFromExecution,
+  modelValidationError,
+  resolveModelSelection,
+  selectionReport,
+} from "./models.js"
 
 const SKILL_LOCATION = fileURLToPath(new URL("../skills/switchboard/SKILL.md", import.meta.url))
 
@@ -43,6 +52,48 @@ export default Plugin.define({
   async setup(ctx) {
     const options = normalizeOptions(ctx.options)
     const skillMarkdown = await readFile(SKILL_LOCATION, "utf8")
+
+    // Runs a short non-delegation harness subcommand (for example `agy models`)
+    // through the same host, launcher-profile, or Dungeon path and environment
+    // allowlist used for delegation, with a short timeout and small output cap.
+    async function runAuxiliary(harness, args, context) {
+      const limits = {
+        timeoutMs: MODEL_LIST_TIMEOUT_MS,
+        maxOutputBytes: Math.min(options.maxOutputBytes, MODEL_LIST_MAX_OUTPUT_BYTES),
+        signal: context.signal,
+      }
+      const session = await ctx.session.get({ sessionID: context.sessionID })
+      const workspace = await resolveWorkspace(session)
+      if (harness.profile?.type === "dungeon") {
+        const release = acquireWorkspaceLock(workspace.lockDirectory, harness.id)
+        try {
+          const binding = await inspectDungeon(harness, workspace, context.signal)
+          return await runDungeonGuarded({ harness, binding, args: [harness.command, ...args], ...limits })
+        } finally {
+          release()
+        }
+      }
+      const executable = await findExecutable(harness.command)
+      if (!executable) throw new Error(`CLI executable not found: ${harness.command}`)
+      let command = executable
+      let launchArgs = [...args]
+      if (harness.profile) {
+        command = await findExecutable(harness.profile.command)
+        if (!command) throw new Error(`execution profile launcher not found: ${harness.executionProfile}`)
+        launchArgs = [...harness.profile.args.map((arg) => arg.replaceAll("{cwd}", workspace.cwd)), "--", executable, ...args]
+      }
+      return await runProcess({
+        command,
+        args: launchArgs,
+        cwd: workspace.cwd,
+        env: subprocessEnvironment(harness.envAllowlist),
+        ...limits,
+      })
+    }
+
+    const catalog = createModelCatalog({
+      list: async (harness, context) => modelsFromExecution(harness, await runAuxiliary(harness, harness.modelListArgs, context)),
+    })
 
     await ctx.skill.transform((editor) => {
       editor.add({
@@ -150,12 +201,12 @@ export default Plugin.define({
             model: {
               type: "string",
               minLength: 1,
-              description: "Optional harness-native model selector.",
+              description: "Optional configured role name from harnesses.<id>.models or raw harness-native model ID. A role expands to its configured model and effort. Omitted uses the harness's configured `default` role when present, otherwise the vendor default.",
             },
             effort: {
               type: "string",
               minLength: 1,
-              description: "Optional Antigravity or Claude native reasoning effort: low, medium, high, xhigh, max. Unsupported harnesses reject it.",
+              description: "Optional Antigravity or Claude native reasoning effort: low, medium, high, xhigh, max. Overrides a role's configured effort. Unsupported harnesses reject it.",
             },
             timeoutSeconds: {
               type: "integer",
@@ -174,13 +225,15 @@ export default Plugin.define({
         },
         options: { namespace: "switchboard", codemode: true },
         execute: async (input, context) => {
-          const selection = { requestedModel: input.model ?? "unknown", requestedEffort: input.effort }
+          let selection = selectionReport({ model: input.model, effort: input.effort })
           let harness
           try {
             harness = getHarness(input.harness, options)
           } catch (error) {
             return failure(input.harness, error.message, selection)
           }
+          const resolved = resolveModelSelection(harness.models, { model: input.model, effort: input.effort })
+          selection = selectionReport(resolved)
           const profile = { executionProfile: harness.executionProfile }
 
           const isDungeon = harness.profile?.type === "dungeon"
@@ -190,6 +243,13 @@ export default Plugin.define({
               installHint: harness.installHint,
               ...selection,
             })
+          }
+
+          if (options.validateModels && resolved.model !== undefined && harness.modelListArgs) {
+            const listing = await catalog.live(harness, context)
+            const invalid = modelValidationError(harness.id, resolved, listing.live, harness.models)
+            if (invalid) return failure(harness.id, invalid, { ...profile, ...selection })
+            if (listing.liveError) selection.warnings = [`model availability not validated: ${listing.liveError}`]
           }
 
           let workspace
@@ -207,8 +267,8 @@ export default Plugin.define({
               prompt,
               mode: requestedMode,
               sessionID: input.sessionID,
-              model: input.model,
-              effort: input.effort,
+              model: resolved.model,
+              effort: resolved.effort,
               timeoutSeconds: resolveTimeoutSeconds(input.timeoutSeconds, options),
             })
             launchArgs = invocation.args

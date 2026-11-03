@@ -231,6 +231,9 @@ const DEFINITIONS = Object.freeze({
     command: "agy",
     resume: true,
     installHint: "Install and authenticate the Antigravity CLI (`agy`).",
+    // Only Antigravity has a verified model-listing subcommand; other
+    // harnesses intentionally omit modelListArgs rather than guess flags.
+    modelListArgs: Object.freeze(["models"]),
     buildArgs: antigravity,
     parse: parseAntigravity,
   },
@@ -278,6 +281,7 @@ export function getHarness(id, options) {
     executionProfile: profileID ?? "host",
     profile,
     envAllowlist: configured.envAllowlist,
+    models: configured.models ?? {},
   }
 }
 

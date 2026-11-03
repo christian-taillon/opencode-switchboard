@@ -11,9 +11,45 @@ export const DEFAULTS = Object.freeze({
 
 const HARNESS_IDS = ["antigravity", "claude", "gemini", "codex"]
 
+export const EFFORT_LEVELS = Object.freeze(["low", "medium", "high", "xhigh", "max"])
+export const MODEL_ROLE_PATTERN = /^[a-z][a-z0-9-]*$/
+const MODEL_ROLE_KEYS = new Set(["model", "effort", "pool"])
+
 function object(value, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`)
   return value
+}
+
+function nonemptyString(value) {
+  return typeof value === "string" && value.trim().length > 0 && !value.includes("\0")
+}
+
+function normalizeModelRole(value, label) {
+  const entry = object(value, label)
+  for (const key of Object.keys(entry)) {
+    if (!MODEL_ROLE_KEYS.has(key)) throw new Error(`${label} has unsupported field: ${key}`)
+  }
+  if (!nonemptyString(entry.model)) throw new Error(`${label}.model must be a nonempty string`)
+  if (entry.effort !== undefined && !EFFORT_LEVELS.includes(entry.effort)) {
+    throw new Error(`${label}.effort must be one of ${EFFORT_LEVELS.join(", ")}`)
+  }
+  if (entry.pool !== undefined && !nonemptyString(entry.pool)) throw new Error(`${label}.pool must be a nonempty string`)
+  return {
+    model: entry.model.trim(),
+    ...(entry.effort === undefined ? {} : { effort: entry.effort }),
+    ...(entry.pool === undefined ? {} : { pool: entry.pool.trim() }),
+  }
+}
+
+export function normalizeModels(value, harnessID) {
+  const models = {}
+  if (value === undefined) return models
+  const label = `harnesses.${harnessID}.models`
+  for (const [role, entry] of Object.entries(object(value, label))) {
+    if (!MODEL_ROLE_PATTERN.test(role)) throw new Error(`invalid model role name: ${harnessID}.${role}; expected ${MODEL_ROLE_PATTERN}`)
+    models[role] = normalizeModelRole(entry, `${label}.${role}`)
+  }
+  return models
 }
 
 export function normalizeEnvAllowlist(value) {
@@ -79,7 +115,12 @@ export function normalizeOptions(raw = {}) {
           : undefined,
       executionProfile: input?.executionProfile,
       envAllowlist: input?.envAllowlist === undefined ? [...DEFAULT_ENV_ALLOWLIST] : normalizeEnvAllowlist(input.envAllowlist),
+      models: normalizeModels(input?.models, id),
     }
+  }
+
+  if (raw.validateModels !== undefined && typeof raw.validateModels !== "boolean") {
+    throw new Error("validateModels must be a boolean")
   }
 
   return {
@@ -87,6 +128,7 @@ export function normalizeOptions(raw = {}) {
     defaultTimeoutSeconds,
     maxTimeoutSeconds,
     maxOutputBytes,
+    validateModels: raw.validateModels !== false,
     harnesses,
     executionProfiles,
   }
