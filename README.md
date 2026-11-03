@@ -68,7 +68,7 @@ The native wrappers use `openai/gpt-6-luna#high` to select and forward work; the
 
 | Harness | Default | Task-based alternatives |
 | --- | --- | --- |
-| Antigravity | `gemini-3.8-flash-medium`, `medium` effort | Flash Low/`low` for lightweight work; Flash High/`high` for harder reasoning |
+| Antigravity | `claude-opus-5-5-medium`, `medium` effort | `gemini-3.8-flash-medium`/`medium` for lightweight work or to preserve Claude quota (Gemini uses a separate quota pool); `claude-opus-5-5-high`/`high` for harder reasoning |
 | Claude Code | `claude-opus-5-5`, `high` effort | `claude-opus-5-5`/`xhigh` for exceptional work; `claude-sonnet-5-5`/`xhigh` for routine work; `claude-haiku-4-5` without effort for lightweight work |
 
 Parents can supply `externalModel` and `externalEffort` in the native subagent's task prompt. Explicit selections win; otherwise the wrapper chooses before starting and retains that pair on resume. The native OpenCode subagent tool's `model` argument changes the wrapper model, not the external harness. Unavailable selections are reported, not silently replaced. Future models are not selected until available and verified.
@@ -241,9 +241,26 @@ For optional overrides, use the plugin object form with `package` and `options` 
 | `harnesses.<id>.command` | `agy`, `claude`, `gemini`, or `codex` |
 | `harnesses.<id>.envAllowlist` | `PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR` |
 | `harnesses.<id>.executionProfile` | unset (`host`); names an entry in `executionProfiles` |
+| `harnesses.<id>.models` | `{ role: { model, effort?, pool? } }`; optional named selections, with `default` used when no model is supplied |
+| `validateModels` | `true`; validate against a bounded live listing when supported |
 | `executionProfiles.<id>` | Launcher `{ approved, command, args }` (optional `type: "launcher"`), or Dungeon `{ type: "dungeon", approved, command, config }`; absolute trusted paths |
 
 `command` is an executable name or path, not a shell string. `enabled: false` disables that harness for all callers of this plugin instance, including wrappers.
+
+Model roles expand to a harness-native model ID and optional effort; a call's explicit effort overrides the role. Unrecognized role names are passed through as raw model IDs. `pool` is descriptive metadata only. Live model validation is currently available for Antigravity (`agy models`); its successful listing is cached briefly. Listing failures do not block delegation but return a warning, and other harnesses are not live-validated. Set `validateModels: false` to disable validation.
+
+```jsonc
+{
+  "harnesses": {
+    "antigravity": {
+      "models": {
+        "default": { "model": "claude-opus-5-5-medium", "effort": "medium", "pool": "claude" },
+        "lightweight": { "model": "gemini-3.8-flash-medium", "effort": "medium", "pool": "gemini" }
+      }
+    }
+  }
+}
+```
 
 ### Optional Dungeon execution
 
@@ -325,21 +342,6 @@ edit and external-session resume also passed, but its test runner failed to open
 this is **not** a complete Antigravity edit/test gate. Vendor `SUCCESS` did not
 establish that the requested test ran. See Dungeon's
 [revision-qualified validation](https://github.com/Dark-Roast-Cyber/dungeon/blob/main/docs/validation.md).
-
-### Native Antigravity sandbox experiment
-
-**Validated observation; partial acceptance.** A separate host pilot with Antigravity
-1.3.3, `--sandbox` and temporarily approved `toolPermission: "proceed-in-sandbox"`
-completed a synthetic edit, Node test and same-conversation resume. Shell reads and
-writes to an unmounted outside path were sandbox-blocked; native file tools were
-denied by permissions, not proven enclosed by the terminal sandbox. A network probe
-returned HTTP 403, but its origin was not established, so network enforcement remains
-unproven. Requested effort was not emitted in vendor metadata.
-
-Original settings were restored and synthetic fixtures removed. Switchboard does
-not add `--sandbox` or enable sandbox auto-approval. The [native terminal sandbox](https://antigravity.google/docs/sandbox/)
-is distinct from Dungeon's outer guest boundary; this pilot does not establish
-nested compatibility or justify changing defaults.
 
 ## Harness prerequisites
 
