@@ -67,8 +67,22 @@ export function normalizeOptions(raw = {}) {
     if (input?.executionProfile !== undefined && (typeof input.executionProfile !== "string" || !input.executionProfile)) {
       throw new Error(`invalid executionProfile: ${id}`)
     }
+    if (id !== "antigravity" && ["transport", "acpCommand", "acpArgs", "acpApprovedCommands"].some((key) => input?.[key] !== undefined)) {
+      throw new Error("ACP configuration is only supported by antigravity")
+    }
+    if (input?.transport !== undefined && !["cli", "acp"].includes(input.transport)) throw new Error("invalid transport: " + id)
+    if (input?.acpCommand !== undefined && (typeof input.acpCommand !== "string" || !input.acpCommand.trim())) throw new Error("invalid acpCommand")
+    for (const key of ["acpArgs", "acpApprovedCommands"]) {
+      if (input?.[key] !== undefined && (!Array.isArray(input[key]) || input[key].some((v) => typeof v !== "string" || !v.trim() || v.includes("\0")))) {
+        throw new Error("invalid " + key)
+      }
+    }
     harnesses[id] = {
       enabled: input?.enabled !== false,
+      transport: input?.transport ?? "cli",
+      acpCommand: input?.acpCommand?.trim() ?? "agy_acp_server.par",
+      acpArgs: input?.acpArgs ?? (process.platform === "linux" ? ["--uid="] : []),
+      acpApprovedCommands: input?.acpApprovedCommands ?? [],
       command:
         typeof input?.command === "string" && input.command.trim().length > 0
           ? input.command.trim()

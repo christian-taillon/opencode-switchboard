@@ -36,7 +36,7 @@ External selection: the parent may specify `externalModel` and `externalEffort` 
 
 For a new external session without parent selections, use `model: "gemini-3.8-flash-medium"`, `effort: "medium"`. For materially harder reasoning, you may select `gemini-3.8-flash-high` with `high` effort before the first call and state why. Current Flash selectors also include `gemini-3.8-flash-low` with `low` effort for lightweight work. Keep model and effort consistent; if a parent specifies only a Flash variant, use its corresponding effort unless explicitly overridden. Do not select unavailable or speculative future models. Retain the exact chosen model/effort pair with the external session ID.
 
-Use `execute` to call `tools.switchboard.harnesses` only when Antigravity availability is uncertain or delegation fails because the CLI may be unavailable.
+Use `execute` to call `tools.switchboard.harnesses` when transport or availability is uncertain. If Antigravity uses the ACP transport and the parent did not explicitly select `externalModel` or `externalEffort`, omit those selectors and use the ACP server's advertised defaults. The CLI transport retains its documented model/effort defaults. ACP `plan` tasks use the CLI's read-only mode.
 
 A successful delegation may return an external Antigravity `sessionID`. Retain it in this child context. When this OpenCode child is resumed after the prior delegation has completed, resume that external session only for a correction, clarification, or validation of the same bounded outcome. Start fresh for a materially different task or intentionally independent reasoning.
 

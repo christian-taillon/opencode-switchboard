@@ -281,3 +281,68 @@ pnpm run check
 - Codex resume and per-delegation model override are disabled.
 - Harness CLI flags can change upstream. Switchboard keeps those differences inside adapters so they can be updated without changing the OpenCode-facing tool contract.
 - The package currently pins `@opencode/plugin` `2.0.4`. Validate plugin loading against the OpenCode 2 build you run with `opencode plugin list` before relying on Switchboard.
+
+
+## Experimental Antigravity ACP transport
+
+The normal Antigravity CLI remains the default. A bounded ACP client can run
+Google's official `agy_acp_server.par` over stdio without changing Claude,
+Gemini, or Codex. This is **experimental**, not a verified production integration.
+
+Install and authenticate the official Antigravity ACP server separately.
+Google's ACP registry publishes versioned archives, SHA-256 hashes, and
+platform-specific launch flags:
+https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json
+
+For Linux x86_64, the current documented registry release is **1.4.5**.
+Install its verified `agy_acp_server.par` in a directory on `PATH`; the
+plugin does not download executables or alter credentials. Standard `agy`
+authentication may be shared, but this must be verified with a live ACP session.
+
+To opt in, set the plugin options, leaving other settings intact:
+
+```jsonc
+{
+  "plugins": [{
+    "package": "/absolute/path/to/switchboard",
+    "options": {
+      "harnesses": {
+        "antigravity": {
+          "transport": "acp",
+          "acpCommand": "/absolute/path/to/agy_acp_server.par",
+          "acpArgs": ["--uid="],
+          "acpApprovedCommands": []
+        }
+      }
+    }
+  }]
+}
+```
+
+The CLI remains available: set `transport: "cli"` to revert. `plan`
+requests always run through the CLI's `--mode=plan` while ACP read-only
+semantics remain unverified. Use the same explicit task contract, session ID,
+model, and effort arguments as before. ACP accepts a requested model or effort
+only if the server advertises the selection; **the wrapper should omit its
+hard-coded model and effort defaults for ACP**.
+
+ACP defaults to `auto_edit`, verified against advertised session modes or
+config options. It refuses to run if the mode is unavailable rather than
+silently falling back. ACP permission requests are answered non-interactively:
+workspace file edits with concrete in-workspace paths are approved once;
+everything else is denied, except **exact** `acpApprovedCommands` strings
+in `full` mode. Leave this array empty until necessary. Project scripts
+can execute arbitrary code, so only approve known commands for trusted
+projects. Denied requests fail the delegation even if the agent returns text.
+
+ACP does not inherit OpenCode's shell permissions, and path-based permission
+checks are **not OS containment**. Use a disposable checkout for initial
+validation. The existing `executionProfiles` configuration is deliberately
+rejected for ACP, rather than silently running uncontained. Sessions are
+resumed only for the same task. Each call uses a new ACP server process,
+cancellation/timeout terminates its process group, and tool events are
+forwarded as progress.
+
+Run `pnpm test` and `pnpm run check` from the checkout. Then run a live
+plan, edit, build/test, deny, cancellation, and resume smoke test on the
+target Linux workstation before changing the default or widening approvals.

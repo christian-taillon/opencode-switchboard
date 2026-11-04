@@ -9,6 +9,7 @@ import {
   parseHarnessOutput,
 } from "./harnesses.js"
 import { buildWorkerPrompt } from "./prompt.js"
+import { runAntigravityAcp } from "./acp.js"
 import { findExecutable, runProcess, subprocessEnvironment } from "./runner.js"
 import { acquireWorkspaceLock, resolveWorkspace } from "./workspace.js"
 
@@ -92,7 +93,7 @@ export default Plugin.define({
           const rows = await Promise.all(
             harnessDefinitions(options).map(async (harness) => ({
               ...harness,
-              available: harness.enabled ? Boolean(await findExecutable(harness.command)) : false,
+              available: harness.enabled ? Boolean(await findExecutable(harness.transport === "acp" ? harness.acpCommand : harness.command)) : false,
             })),
           )
           return jsonContent({ platform: process.platform, harnesses: rows })
@@ -164,10 +165,12 @@ export default Plugin.define({
             return failure(input.harness, error.message, selection)
           }
           const profile = { executionProfile: harness.executionProfile }
-
-          const executable = await findExecutable(harness.command)
+          // ACP has no verified read-only mode: keep vendor-enforced CLI plan mode.
+          const useACP = harness.id === "antigravity" && harness.transport === "acp" && input.mode !== "plan"
+          const selectedCommand = useACP ? harness.acpCommand : harness.command
+          const executable = await findExecutable(selectedCommand)
           if (!executable) {
-            return failure(harness.id, `CLI executable not found: ${harness.command}`, {
+            return failure(harness.id, `Executable not found: ${selectedCommand}`, {
               installHint: harness.installHint,
               ...selection,
             })
@@ -183,16 +186,23 @@ export default Plugin.define({
             workspace = await resolveWorkspace(session, input.workingDirectory)
             const requestedMode = input.mode ?? "edit"
             prompt = buildWorkerPrompt(input.prompt, requestedMode)
-            invocation = buildInvocation(harness, {
-              prompt,
-              mode: requestedMode,
-              sessionID: input.sessionID,
-              model: input.model,
-              effort: input.effort,
-              timeoutSeconds: resolveTimeoutSeconds(input.timeoutSeconds, options),
-            })
-            launchArgs = invocation.args
-            if (harness.profile) {
+            if (useACP) {
+              if (harness.profile) throw new Error("ACP transport does not support executionProfiles; configure containment separately")
+              if (!["edit", "full"].includes(requestedMode)) throw new Error("unsupported ACP mode: " + requestedMode)
+              invocation = { mode: requestedMode }
+              launchArgs = harness.acpArgs
+            } else {
+              invocation = buildInvocation(harness, {
+                prompt,
+                mode: requestedMode,
+                sessionID: input.sessionID,
+                model: input.model,
+                effort: input.effort,
+                timeoutSeconds: resolveTimeoutSeconds(input.timeoutSeconds, options),
+              })
+              launchArgs = invocation.args
+            }
+            if (harness.profile && !useACP) {
               launchCommand = await findExecutable(harness.profile.command)
               if (!launchCommand) throw new Error(`execution profile launcher not found: ${harness.executionProfile}`)
               launchArgs = [...harness.profile.args.map((arg) => arg.replaceAll("{cwd}", workspace.cwd)),
@@ -215,7 +225,19 @@ export default Plugin.define({
               status: `Delegating to ${harness.label} (${invocation.mode})`,
             })
 
-            const execution = await runProcess({
+            const execution = useACP ? await runAntigravityAcp({
+              command: launchCommand,
+              args: launchArgs,
+              cwd: workspace.cwd,
+              env: subprocessEnvironment([...harness.envAllowlist, "GEMINI_HOME", "ANTIGRAVITY_HARNESS_PATH", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]),
+              prompt, mode: invocation.mode, sessionID: input.sessionID,
+              model: input.model, effort: input.effort,
+              allowedCommands: harness.acpApprovedCommands,
+              timeoutMs: timeoutSeconds * 1000,
+              maxOutputBytes: options.maxOutputBytes,
+              signal: context.signal,
+              onProgress: context.progress,
+            }) : await runProcess({
               command: launchCommand,
               args: launchArgs,
               cwd: workspace.cwd,
@@ -225,9 +247,15 @@ export default Plugin.define({
               signal: context.signal,
             })
 
-            const parsed = parseHarnessOutput(harness, execution.stdout, {
-              truncated: execution.stdoutTruncated,
-            })
+            const parsed = useACP ? {
+              response: execution.response,
+              sessionID: execution.sessionID,
+              providerStatus: execution.providerStatus,
+              deniedActions: execution.deniedActions,
+              protocolError: execution.protocolError,
+              error: execution.error,
+              providerFailed: execution.status === "failed",
+            } : parseHarnessOutput(harness, execution.stdout, { truncated: execution.stdoutTruncated })
             const providerFailed = parsed.providerFailed === true || Boolean(parsed.protocolError)
             const status =
               execution.status === "completed" && providerFailed ? "failed" : execution.status
@@ -248,6 +276,7 @@ export default Plugin.define({
               status,
               harness: harness.id,
               mode: invocation.mode,
+              transport: useACP ? "acp" : "cli",
               ...profile,
               ...selection,
               sessionID: parsed.sessionID,
