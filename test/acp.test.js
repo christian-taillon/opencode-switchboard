@@ -4,7 +4,7 @@ import os from "node:os"
 import { fileURLToPath } from "node:url"
 import { runAntigravityAcp } from "../src/acp.js"
 
-const fixture = fileURLToPath(new URL("./acp-fixture.mjs", import.meta.url))
+const fixture = fileURLToPath(new URL("../fixtures/acp-server.mjs", import.meta.url))
 function input(overrides = {}) {
   return {
     command: process.execPath, args: [fixture], cwd: os.tmpdir(), env: process.env,
