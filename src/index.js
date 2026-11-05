@@ -12,6 +12,16 @@ import { buildWorkerPrompt } from "./prompt.js"
 import { runAntigravityAcp } from "./acp.js"
 import { findExecutable, runProcess, subprocessEnvironment } from "./runner.js"
 import { acquireWorkspaceLock, resolveWorkspace } from "./workspace.js"
+import { dungeonKey, GUEST_DISCOVERY, inspectDungeon, persistDungeonSession, resumeBinding, runDungeonGuarded, sameResumeBinding } from "./dungeon.js"
+import {
+  createModelCatalog,
+  MODEL_LIST_MAX_OUTPUT_BYTES,
+  MODEL_LIST_TIMEOUT_MS,
+  modelsFromExecution,
+  modelValidationError,
+  resolveModelSelection,
+  selectionReport,
+} from "./models.js"
 
 const SKILL_LOCATION = fileURLToPath(new URL("../skills/switchboard/SKILL.md", import.meta.url))
 
@@ -43,6 +53,48 @@ export default Plugin.define({
   async setup(ctx) {
     const options = normalizeOptions(ctx.options)
     const skillMarkdown = await readFile(SKILL_LOCATION, "utf8")
+
+    // Runs a short non-delegation harness subcommand (for example `agy models`)
+    // through the same host, launcher-profile, or Dungeon path and environment
+    // allowlist used for delegation, with a short timeout and small output cap.
+    async function runAuxiliary(harness, args, context) {
+      const limits = {
+        timeoutMs: MODEL_LIST_TIMEOUT_MS,
+        maxOutputBytes: Math.min(options.maxOutputBytes, MODEL_LIST_MAX_OUTPUT_BYTES),
+        signal: context.signal,
+      }
+      const session = await ctx.session.get({ sessionID: context.sessionID })
+      const workspace = await resolveWorkspace(session)
+      if (harness.profile?.type === "dungeon") {
+        const release = acquireWorkspaceLock(workspace.lockDirectory, harness.id)
+        try {
+          const binding = await inspectDungeon(harness, workspace, context.signal)
+          return await runDungeonGuarded({ harness, binding, args: [harness.command, ...args], ...limits })
+        } finally {
+          release()
+        }
+      }
+      const executable = await findExecutable(harness.command)
+      if (!executable) throw new Error(`CLI executable not found: ${harness.command}`)
+      let command = executable
+      let launchArgs = [...args]
+      if (harness.profile) {
+        command = await findExecutable(harness.profile.command)
+        if (!command) throw new Error(`execution profile launcher not found: ${harness.executionProfile}`)
+        launchArgs = [...harness.profile.args.map((arg) => arg.replaceAll("{cwd}", workspace.cwd)), "--", executable, ...args]
+      }
+      return await runProcess({
+        command,
+        args: launchArgs,
+        cwd: workspace.cwd,
+        env: subprocessEnvironment(harness.envAllowlist),
+        ...limits,
+      })
+    }
+
+    const catalog = createModelCatalog({
+      list: async (harness, context) => modelsFromExecution(harness, await runAuxiliary(harness, harness.modelListArgs, context)),
+    })
 
     await ctx.skill.transform((editor) => {
       editor.add({
@@ -81,7 +133,7 @@ export default Plugin.define({
       editor.add({
         name: "harnesses",
         description:
-          "List Switchboard harnesses and report which CLI executables are currently available on PATH. Use this before delegation when availability is uncertain.",
+          "List Switchboard harnesses and check executable availability on the host or in the configured Dungeon guest. Guest discovery requires an already Ready approved environment. Use this before delegation when availability is uncertain.",
         input: {
           type: "object",
           properties: {},
@@ -90,12 +142,29 @@ export default Plugin.define({
         options: { namespace: "switchboard", codemode: true },
         execute: async (_input, context) => {
           await context.progress({ status: "Checking external coding harnesses" })
-          const rows = await Promise.all(
-            harnessDefinitions(options).map(async (harness) => ({
-              ...harness,
-              available: harness.enabled ? Boolean(await findExecutable(harness.transport === "acp" ? harness.acpCommand : harness.command)) : false,
-            })),
-          )
+          const rows = []
+          for (const definition of harnessDefinitions(options)) {
+            const row = { ...definition, available: false }
+            let release
+            try {
+              const harness = getHarness(definition.id, options)
+              if (harness.profile?.type !== "dungeon") row.available = Boolean(await findExecutable(harness.transport === "acp" ? harness.acpCommand : harness.command))
+              else {
+                const session = await ctx.session.get({ sessionID: context.sessionID })
+                const workspace = await resolveWorkspace(session)
+                release = acquireWorkspaceLock(workspace.lockDirectory, harness.id)
+                const binding = await inspectDungeon(harness, workspace, context.signal)
+                const result = await runDungeonGuarded({ harness, binding,
+                  args: ["/usr/bin/node", "-e", GUEST_DISCOVERY, "--", harness.command],
+                  timeoutMs: 10000, maxOutputBytes: 1024, signal: context.signal })
+                row.availabilityScope = "guest"
+                row.available = result.status === "completed" && !result.outputTruncated && JSON.parse(result.stdout).available === true
+                row.error = result.error
+              }
+            } catch (error) { row.error = error.message }
+            finally { release?.() }
+            rows.push(row)
+          }
           return jsonContent({ platform: process.platform, harnesses: rows })
         },
       })
@@ -133,12 +202,12 @@ export default Plugin.define({
             model: {
               type: "string",
               minLength: 1,
-              description: "Optional harness-native model selector.",
+              description: "Optional configured role name from harnesses.<id>.models or raw harness-native model ID. A role expands to its configured model and effort. Omitted uses the harness's configured `default` role when present, otherwise the vendor default.",
             },
             effort: {
               type: "string",
               minLength: 1,
-              description: "Optional Antigravity or Claude native reasoning effort: low, medium, high, xhigh, max. Unsupported harnesses reject it.",
+              description: "Optional Antigravity or Claude native reasoning effort: low, medium, high, xhigh, max. Overrides a role's configured effort. Unsupported harnesses reject it.",
             },
             timeoutSeconds: {
               type: "integer",
@@ -157,18 +226,24 @@ export default Plugin.define({
         },
         options: { namespace: "switchboard", codemode: true },
         execute: async (input, context) => {
-          const selection = { requestedModel: input.model ?? "unknown", requestedEffort: input.effort }
+          let selection = selectionReport({ model: input.model, effort: input.effort })
           let harness
           try {
             harness = getHarness(input.harness, options)
           } catch (error) {
             return failure(input.harness, error.message, selection)
           }
+          const resolved = resolveModelSelection(harness.models, { model: input.model, effort: input.effort })
+          selection = selectionReport(resolved)
           const profile = { executionProfile: harness.executionProfile }
+          const isDungeon = harness.profile?.type === "dungeon"
           // ACP has no verified read-only mode: keep vendor-enforced CLI plan mode.
           const useACP = harness.id === "antigravity" && harness.transport === "acp" && input.mode !== "plan"
+          if (useACP && harness.profile) {
+            return failure(harness.id, "ACP transport does not support executionProfiles; configure containment separately", { ...profile, ...selection })
+          }
           const selectedCommand = useACP ? harness.acpCommand : harness.command
-          const executable = await findExecutable(selectedCommand)
+          const executable = isDungeon ? selectedCommand : await findExecutable(selectedCommand)
           if (!executable) {
             return failure(harness.id, `Executable not found: ${selectedCommand}`, {
               installHint: harness.installHint,
@@ -176,18 +251,25 @@ export default Plugin.define({
             })
           }
 
+          if (options.validateModels && resolved.model !== undefined && harness.modelListArgs) {
+            const listing = await catalog.live(harness, context)
+            const invalid = modelValidationError(harness.id, resolved, listing.live, harness.models)
+            if (invalid) return failure(harness.id, invalid, { ...profile, ...selection })
+            if (listing.liveError) selection.warnings = [`model availability not validated: ${listing.liveError}`]
+          }
+
           let workspace
           let invocation
           let prompt
           let launchCommand = executable
           let launchArgs
+          let binding
           try {
             const session = await ctx.session.get({ sessionID: context.sessionID })
             workspace = await resolveWorkspace(session, input.workingDirectory)
             const requestedMode = input.mode ?? "edit"
             prompt = buildWorkerPrompt(input.prompt, requestedMode)
             if (useACP) {
-              if (harness.profile) throw new Error("ACP transport does not support executionProfiles; configure containment separately")
               if (!["edit", "full"].includes(requestedMode)) throw new Error("unsupported ACP mode: " + requestedMode)
               invocation = { mode: requestedMode }
               launchArgs = harness.acpArgs
@@ -196,13 +278,13 @@ export default Plugin.define({
                 prompt,
                 mode: requestedMode,
                 sessionID: input.sessionID,
-                model: input.model,
-                effort: input.effort,
+                model: resolved.model,
+                effort: resolved.effort,
                 timeoutSeconds: resolveTimeoutSeconds(input.timeoutSeconds, options),
               })
               launchArgs = invocation.args
             }
-            if (harness.profile && !useACP) {
+            if (harness.profile && !isDungeon && !useACP) {
               launchCommand = await findExecutable(harness.profile.command)
               if (!launchCommand) throw new Error(`execution profile launcher not found: ${harness.executionProfile}`)
               launchArgs = [...harness.profile.args.map((arg) => arg.replaceAll("{cwd}", workspace.cwd)),
@@ -214,13 +296,22 @@ export default Plugin.define({
 
           let release
           try {
-            if (invocation.mode !== "plan") release = acquireWorkspaceLock(workspace.lockDirectory, harness.id)
+            if (isDungeon || invocation.mode !== "plan") release = acquireWorkspaceLock(workspace.lockDirectory, harness.id)
           } catch (error) {
             return failure(harness.id, error.message, { activeHarness: error.activeHarness, ...profile, ...selection })
           }
           const timeoutSeconds = resolveTimeoutSeconds(input.timeoutSeconds, options)
 
           try {
+            if (isDungeon) {
+              binding = await inspectDungeon(harness, workspace, context.signal)
+              if (input.sessionID) {
+                const stored = await ctx.storage.get(dungeonKey("session", [harness.id, input.sessionID]))
+                if (!sameResumeBinding(stored, resumeBinding(harness, binding))) {
+                  throw new Error("Dungeon resume session is unknown or bound to another environment/project/cwd")
+                }
+              }
+            }
             await context.progress({
               status: `Delegating to ${harness.label} (${invocation.mode})`,
             })
@@ -231,12 +322,15 @@ export default Plugin.define({
               cwd: workspace.cwd,
               env: subprocessEnvironment([...harness.envAllowlist, "GEMINI_HOME", "ANTIGRAVITY_HARNESS_PATH", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]),
               prompt, mode: invocation.mode, sessionID: input.sessionID,
-              model: input.model, effort: input.effort,
+              model: resolved.model, effort: resolved.effort,
               allowedCommands: harness.acpApprovedCommands,
               timeoutMs: timeoutSeconds * 1000,
               maxOutputBytes: options.maxOutputBytes,
               signal: context.signal,
               onProgress: context.progress,
+            }) : isDungeon ? await runDungeonGuarded({
+              harness, binding, args: [harness.command, ...invocation.args],
+              timeoutMs: timeoutSeconds * 1000, maxOutputBytes: options.maxOutputBytes, signal: context.signal,
             }) : await runProcess({
               command: launchCommand,
               args: launchArgs,
@@ -256,6 +350,20 @@ export default Plugin.define({
               error: execution.error,
               providerFailed: execution.status === "failed",
             } : parseHarnessOutput(harness, execution.stdout, { truncated: execution.stdoutTruncated })
+            if (isDungeon && parsed.sessionID) {
+              if (execution.dungeon.cleanup !== "confirmed" || execution.dungeon.transportError ||
+                  execution.dungeon.protocolError || parsed.protocolError) {
+                delete parsed.sessionID
+              } else {
+                try {
+                  await persistDungeonSession(ctx.storage, harness, binding, parsed.sessionID)
+                } catch (error) {
+                  delete parsed.sessionID
+                  execution.status = "failed"
+                  execution.error = `Dungeon session binding could not be persisted: ${error.message}`
+                }
+              }
+            }
             const providerFailed = parsed.providerFailed === true || Boolean(parsed.protocolError)
             const status =
               execution.status === "completed" && providerFailed ? "failed" : execution.status
@@ -279,6 +387,9 @@ export default Plugin.define({
               transport: useACP ? "acp" : "cli",
               ...profile,
               ...selection,
+              ...(isDungeon ? { dungeon: { ...execution.dungeon, config: binding.config,
+                fingerprint: binding.fingerprint, project: binding.project, guestCwd: binding.guestCwd,
+                projectTransfer: "copy", hostChangesApplied: false } } : {}),
               sessionID: parsed.sessionID,
               response: parsed.response,
               providerStatus: parsed.providerStatus,
@@ -286,6 +397,7 @@ export default Plugin.define({
               protocolError: parsed.protocolError,
               rawOutput: parsed.rawOutput,
               usage: parsed.usage,
+              modelUsage: parsed.modelUsage,
               exitCode: execution.exitCode,
               signal: execution.signal,
               durationMs: execution.durationMs,
@@ -295,6 +407,8 @@ export default Plugin.define({
               outputTruncated: execution.outputTruncated,
               error,
             })
+          } catch (error) {
+            return failure(harness.id, error.message, { ...profile, ...selection })
           } finally {
             release?.()
           }

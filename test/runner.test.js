@@ -117,7 +117,7 @@ setInterval(() => {}, 1000)
           const readyDeadline = Date.now() + 3000
           while (!pid && Date.now() < readyDeadline) {
             try { pid = Number(await readFile(pidfile, "utf8")) } catch (error) {
-              if (error.code !== "ENOENT") throw error
+              if (!["ENOENT", "ESRCH"].includes(error.code)) throw error
             }
             if (!pid) await delay(10)
           }

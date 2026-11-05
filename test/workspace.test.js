@@ -42,9 +42,9 @@ test("session workspace and subpath determine cwd, with a checkout-wide lock dir
   await mkdir(path.join(root, ".git"))
   const session = { location: { directory: root }, subpath: "src" }
 
-  assert.deepEqual(await resolveWorkspace(session), { cwd: nested, lockDirectory: root })
-  assert.deepEqual(await resolveWorkspace(session, "."), { cwd: root, lockDirectory: root })
-  assert.deepEqual(await resolveWorkspace({ location: { directory: nested } }), { cwd: nested, lockDirectory: root })
+  assert.deepEqual(await resolveWorkspace(session), { root, cwd: nested, lockDirectory: root })
+  assert.deepEqual(await resolveWorkspace(session, "."), { root, cwd: root, lockDirectory: root })
+  assert.deepEqual(await resolveWorkspace({ location: { directory: nested } }), { root: nested, cwd: nested, lockDirectory: root })
 })
 
 test("workspace validation rejects missing locations, files, and symlink escapes", async (t) => {
@@ -93,6 +93,7 @@ test("non-Git workspaces lock their root and overlapping writers are rejected", 
   const nested = path.join(root, "src")
   await mkdir(nested)
   assert.deepEqual(await resolveWorkspace({ location: { directory: root } }, "src"), {
+    root,
     cwd: nested,
     lockDirectory: root,
   })

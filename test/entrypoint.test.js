@@ -154,7 +154,76 @@ process.stderr.write(${JSON.stringify(notice)})
   }
 })
 
-test("delegate requires terminal output from Claude, Gemini, and Codex despite exit zero", async () => {
+test("model roles reach ACP while plan mode and live listing retain the CLI transport", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-model-transport-"))
+  const fixture = fileURLToPath(new URL("../fixtures/acp-server.mjs", import.meta.url))
+  try {
+    const command = path.join(directory, "agy-fixture")
+    await writeFile(command, `#!${process.execPath}
+const args = process.argv.slice(2)
+if (args[0] === 'models') { console.log('test-model  Test Model'); process.exit(0) }
+if (!args.includes('--mode=plan') || args[args.indexOf('--model') + 1] !== 'test-model' ||
+    args[args.indexOf('--effort') + 1] !== 'medium') process.exit(1)
+console.log(JSON.stringify({ status: 'SUCCESS', response: 'CLI plan completed' }))
+`)
+    await chmod(command, 0o700)
+    const tools = {}
+    await plugin.setup({
+      options: { harnesses: {
+        antigravity: { command, transport: "acp", acpCommand: process.execPath, acpArgs: [fixture, "require-selection"],
+          models: { default: { model: "test-model", effort: "medium" }, chosen: { model: "test-model", effort: "medium" } } },
+        claude: { enabled: false, command: process.execPath },
+      } },
+      session: { get: async () => ({ location: { directory } }) },
+      skill: { transform: async (fn) => fn({ add() {} }) },
+      tool: { transform: async (fn) => fn({ namespace() {}, add(tool) { tools[tool.name] = tool } }) },
+    })
+    const context = { sessionID: "ses_fixture", progress: async () => {} }
+    const rows = JSON.parse((await tools.harnesses.execute({}, context)).content).harnesses
+    assert.equal(rows[0].available, true)
+    assert.equal(rows[1].available, false)
+    for (const input of [{ mode: "edit" }, { mode: "edit", model: "chosen" }, { mode: "plan", model: "chosen" }]) {
+      const result = JSON.parse((await tools.delegate.execute({ harness: "antigravity", prompt: "fixture", ...input }, context)).content)
+      assert.equal(result.status, "completed", result.error)
+      assert.equal(result.transport, input.mode === "plan" ? "cli" : "acp")
+      assert.equal(result.requestedRole, input.model ?? "default")
+      assert.equal(result.requestedModel, "test-model")
+      assert.equal(result.requestedEffort, "medium")
+      assert.equal(result.warnings, undefined)
+      assert.equal(result.response, input.mode === "plan" ? "CLI plan completed" : "completed")
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("ACP rejects execution profiles before model discovery or process launch", async () => {
+  for (const profile of [
+    { type: "launcher", approved: true, command: process.execPath, args: [] },
+    { type: "dungeon", approved: true, command: process.execPath, config: "/nonexistent/dungeon.json" },
+  ]) {
+    let delegate
+    await plugin.setup({
+      options: { executionProfiles: { isolated: profile }, harnesses: { antigravity: {
+        transport: "acp", acpCommand: "/nonexistent/acp", executionProfile: "isolated",
+        models: { default: { model: "test-model" } },
+      } } },
+      session: { get: async () => { throw new Error("must not inspect the workspace or list models") } },
+      skill: { transform: async (fn) => fn({ add() {} }) },
+      tool: { transform: async (fn) => fn({ namespace() {}, add(tool) { if (tool.name === "delegate") delegate = tool } }) },
+    })
+    for (const mode of ["edit", "full"]) {
+      const result = JSON.parse((await delegate.execute({ harness: "antigravity", prompt: "fixture", mode }, {
+        sessionID: "ses_fixture", progress: async () => {},
+      })).content)
+      assert.equal(result.status, "failed")
+      assert.match(result.error, /ACP transport does not support executionProfiles/)
+      assert.equal(result.executionProfile, "isolated")
+    }
+  }
+})
+
+test("delegate requires terminal output and rejects Claude permission denials despite exit zero", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-terminal-"))
   try {
     const command = path.join(directory, "harness-fixture")
@@ -213,6 +282,36 @@ test("delegate requires terminal output from Claude, Gemini, and Codex despite e
           if (status === "completed") assert.equal(result.response, "done")
           else assert.ok(result.error)
         }
+      }
+    }
+    const deniedActions = [{
+      tool_name: "Bash", tool_use_id: "denied-tool",
+      tool_input: { command: "node -e \"console.log('probe')\"" },
+    }]
+    const modelUsage = { "claude-haiku-4-5": { canonicalModel: "claude-haiku-4-5", inputTokens: 18 } }
+    for (const permission_denials of [deniedActions, []]) {
+      const stdout = JSON.stringify({
+        type: "result", subtype: "success", is_error: false, session_id: "c-denied",
+        result: "worker response", permission_denials, modelUsage,
+      })
+      await writeFile(command, `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(stdout)})\n`)
+      const output = await delegate.execute({ harness: "claude", prompt: "fixture", mode: "plan" }, {
+        sessionID: "ses_fixture", progress: async () => {},
+      })
+      const result = JSON.parse(output.content)
+      assert.equal(result.exitCode, 0)
+      assert.equal(result.status, permission_denials.length ? "failed" : "completed")
+      assert.equal(result.providerStatus, "success")
+      assert.equal(result.sessionID, "c-denied")
+      assert.equal(result.response, "worker response")
+      assert.deepEqual(result.modelUsage, modelUsage)
+      assert.equal(result.protocolError, undefined)
+      if (permission_denials.length) {
+        assert.deepEqual(result.deniedActions, deniedActions)
+        assert.match(result.error, /Claude Code tools were denied: Bash/)
+      } else {
+        assert.equal(result.deniedActions, undefined)
+        assert.equal(result.error, undefined)
       }
     }
   } finally {

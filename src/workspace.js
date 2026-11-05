@@ -41,13 +41,13 @@ export async function resolveWorkspace(session, requested) {
   for (let candidate = cwd; ; candidate = path.dirname(candidate)) {
     try {
       const marker = await stat(path.join(candidate, ".git"))
-      if (marker.isDirectory() || marker.isFile()) return { cwd, lockDirectory: candidate }
+      if (marker.isDirectory() || marker.isFile()) return { root, cwd, lockDirectory: candidate }
     } catch (error) {
       if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error
     }
     if (path.dirname(candidate) === candidate) break
   }
-  return { cwd, lockDirectory: root }
+  return { root, cwd, lockDirectory: root }
 }
 
 export function acquireWorkspaceLock(directory, harness) {

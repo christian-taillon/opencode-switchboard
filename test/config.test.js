@@ -35,3 +35,24 @@ test("normalizes defaults and clamps requested timeout", () => {
   assert.equal(resolveTimeoutSeconds(undefined, options), 20)
   assert.equal(resolveTimeoutSeconds(999, options), 30)
 })
+
+test("validates and normalizes configured model roles", () => {
+  const options = normalizeOptions({
+    validateModels: false,
+    harnesses: { antigravity: { models: {
+      default: { model: " claude-opus-5-5-medium ", effort: "medium", pool: " claude " },
+      fast: { model: "gemini-3.8-flash-medium" },
+    } } },
+  })
+  assert.equal(options.validateModels, false)
+  assert.deepEqual(options.harnesses.antigravity.models, {
+    default: { model: "claude-opus-5-5-medium", effort: "medium", pool: "claude" },
+    fast: { model: "gemini-3.8-flash-medium" },
+  })
+  assert.equal(normalizeOptions().validateModels, true)
+  for (const models of [null, [], { "Bad Role": { model: "x" } }, { default: { model: " " } },
+    { default: { model: "x", effort: "urgent" } }, { default: { model: "x", extra: true } }]) {
+    assert.throws(() => normalizeOptions({ harnesses: { antigravity: { models } } }))
+  }
+  assert.throws(() => normalizeOptions({ validateModels: "yes" }), /validateModels/)
+})

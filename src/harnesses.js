@@ -58,15 +58,23 @@ function parseClaude(stdout) {
   if (!value || Array.isArray(value)) {
     return { protocolError: "Claude Code returned invalid JSON; expected a terminal result object", rawOutput: stdout }
   }
+  const deniedActions = Array.isArray(value.permission_denials) && value.permission_denials.length > 0
+    ? value.permission_denials : undefined
   const result = {
     response: typeof value.result === "string" ? value.result : undefined,
     sessionID: firstString(value.session_id, value.sessionId, value.sessionID),
     usage: value.usage,
+    modelUsage: value.modelUsage,
     providerStatus: value.subtype ?? value.status,
-    providerFailed: value.is_error === true || Boolean(value.error) ||
+    providerFailed: value.is_error === true || Boolean(value.error) || Boolean(deniedActions) ||
       (value.type === "result" && typeof value.subtype === "string" && value.subtype !== "success"),
     error: firstString(value.error?.message, value.error,
       Array.isArray(value.errors) ? value.errors.filter((entry) => typeof entry === "string").join("\n") : undefined),
+    deniedActions,
+  }
+  if (deniedActions && !result.error) {
+    const tools = deniedActions.map((entry) => firstString(entry?.tool_name) ?? "unknown").join(", ")
+    result.error = `Claude Code tools were denied: ${tools}. Review scoped vendor permissions before retrying.`
   }
   let protocolError
   if (value.type !== "result" || typeof value.subtype !== "string") {
@@ -223,6 +231,9 @@ const DEFINITIONS = Object.freeze({
     command: "agy",
     resume: true,
     installHint: "Install and authenticate the Antigravity CLI (`agy`).",
+    // Only Antigravity has a verified model-listing subcommand; other
+    // harnesses intentionally omit modelListArgs rather than guess flags.
+    modelListArgs: Object.freeze(["models"]),
     buildArgs: antigravity,
     parse: parseAntigravity,
   },
@@ -270,6 +281,7 @@ export function getHarness(id, options) {
     executionProfile: profileID ?? "host",
     profile,
     envAllowlist: configured.envAllowlist,
+    models: configured.models ?? {},
     transport: configured.transport,
     acpCommand: configured.acpCommand,
     acpArgs: configured.acpArgs,

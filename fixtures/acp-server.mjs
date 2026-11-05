@@ -55,6 +55,10 @@ function handle(message) {
   if (method === "session/prompt") {
     pendingPrompt = id
     if (currentMode !== editMode) return send({ id, error: { code: -32000, message: "Edit mode not selected" } })
+    if (scenario === "require-selection" && (configs.find((item) => item.id === "model").currentValue !== "test-model" ||
+        configs.find((item) => item.id === "thought_level").currentValue !== "medium")) {
+      return send({ id, error: { code: -32000, message: "Model and effort not selected" } })
+    }
     if (scenario === "large-stderr") return process.stderr.write("x".repeat(65537), () => finish("completed"))
     if (scenario === "permission-after-stop") return process.stdout.write(JSON.stringify({
       jsonrpc: "2.0",

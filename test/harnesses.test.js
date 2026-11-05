@@ -267,6 +267,44 @@ test("Claude and Gemini preserve terminal failures without requiring a response"
   assert.equal(gemini.protocolError, undefined)
 })
 
+test("Claude retains permission denials and model usage despite a success result", () => {
+  const harness = getHarness("claude", options)
+  const deniedActions = [{
+    tool_name: "Bash", tool_use_id: "denied-tool",
+    tool_input: { command: "node -e \"console.log('probe')\"" },
+  }]
+  const modelUsage = { "claude-haiku-4-5": { canonicalModel: "claude-haiku-4-5", inputTokens: 18 } }
+  for (const result of ["Command execution was denied", ""]) {
+    const parsed = parseHarnessOutput(harness, JSON.stringify({
+      type: "result", subtype: "success", is_error: false, session_id: "c-denied",
+      result, permission_denials: deniedActions, modelUsage,
+    }))
+    assert.equal(parsed.providerFailed, true)
+    assert.equal(parsed.providerStatus, "success")
+    assert.equal(parsed.sessionID, "c-denied")
+    assert.equal(parsed.response, result)
+    assert.deepEqual(parsed.deniedActions, deniedActions)
+    assert.deepEqual(parsed.modelUsage, modelUsage)
+    assert.match(parsed.error, /Claude Code tools were denied: Bash/)
+    assert.equal(parsed.protocolError, undefined)
+  }
+  const failed = parseHarnessOutput(harness, JSON.stringify({
+    type: "result", subtype: "error_max_turns", errors: ["turn limit reached"],
+    permission_denials: deniedActions,
+  }))
+  assert.equal(failed.error, "turn limit reached")
+  assert.deepEqual(failed.deniedActions, deniedActions)
+  for (const permission_denials of [undefined, []]) {
+    const success = parseHarnessOutput(harness, JSON.stringify({
+      type: "result", subtype: "success", result: "done", permission_denials, modelUsage,
+    }))
+    assert.equal(success.providerFailed, false)
+    assert.equal(success.deniedActions, undefined)
+    assert.equal(success.error, undefined)
+    assert.deepEqual(success.modelUsage, modelUsage)
+  }
+})
+
 test("Codex requires valid events, terminal completion, and a completed agent message", () => {
   const started = { type: "thread.started", thread_id: "t" }
   const message = { type: "item.completed", item: { type: "agent_message", text: "done" } }
