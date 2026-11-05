@@ -45,6 +45,46 @@ test("setup registers a schema-valid skill and both tools", async () => {
   assert.equal(tools.find((tool) => tool.name === "delegate").input.properties.effort.type, "string")
 })
 
+test("ACP delegation retains native mode, omitted selectors, and failure diagnostics", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-acp-result-"))
+  const fixture = fileURLToPath(new URL("../fixtures/acp-server.mjs", import.meta.url))
+  try {
+    for (const scenario of ["native", "auth-required", "bad-stdout", "exit-before-init"]) {
+      let delegate
+      await plugin.setup({
+        options: { harnesses: { antigravity: { transport: "acp", acpCommand: process.execPath, acpArgs: [fixture, scenario] } } },
+        session: { get: async () => ({ location: { directory } }) },
+        skill: { transform: async (callback) => callback({ add: () => {} }) },
+        tool: {
+          transform: async (callback) => callback({
+            namespace: () => {},
+            add: (tool) => { if (tool.name === "delegate") delegate = tool },
+          }),
+        },
+      })
+      const output = await delegate.execute({ harness: "antigravity", mode: "edit", prompt: "fixture", timeoutSeconds: 5 }, {
+        sessionID: "ses_fixture",
+        progress: async () => {},
+      })
+      const result = JSON.parse(output.content)
+      assert.equal(result.transport, "acp")
+      assert.equal(result.mode, "edit")
+      assert.equal(result.requestedModel, "unknown")
+      assert.equal(result.requestedEffort, undefined)
+      assert.equal(result.status, scenario === "native" ? "completed" : "failed")
+      if (scenario === "auth-required") assert.equal(result.error, "ACP -32000: Authentication required")
+      if (scenario === "bad-stdout") {
+        assert.ok(result.protocolError)
+        assert.equal(result.error, result.protocolError)
+        assert.equal(result.signal, "SIGTERM")
+      }
+      if (scenario === "exit-before-init") assert.equal(result.exitCode, 23)
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test("delegate fails closed on Antigravity denials and empty success, retaining diagnostics", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-result-"))
   try {

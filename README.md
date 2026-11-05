@@ -286,18 +286,18 @@ pnpm run check
 ## Experimental Antigravity ACP transport
 
 The normal Antigravity CLI remains the default. A bounded ACP client can run
-Google's official `agy_acp_server.par` over stdio without changing Claude,
+Google's official `agy acp` server over stdio without changing Claude,
 Gemini, or Codex. This is **experimental**, not a verified production integration.
 
-Install and authenticate the official Antigravity ACP server separately.
-Google's ACP registry publishes versioned archives, SHA-256 hashes, and
-platform-specific launch flags:
-https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json
+Install Antigravity CLI with native ACP support (`agy acp --help`) and sign in
+using `agy acp --login` in an interactive terminal. Google's documented native
+ACP invocation reuses that cached login:
+https://antigravity.google/docs/cli/acp
 
-For Linux x86_64, the current documented registry release is **1.4.5**.
-Install its verified `agy_acp_server.par` in a directory on `PATH`; the
-plugin does not download executables or alter credentials. Standard `agy`
-authentication may be shared, but this must be verified with a live ACP session.
+The separately distributed `agy_acp_server.par` is a different runtime; do not
+assume a native CLI login authenticates it. Existing standalone installations
+can still supply their own explicit command and arguments. Switchboard does not
+download executables, read tokens, or perform interactive authentication.
 
 To opt in, set the plugin options, leaving other settings intact:
 
@@ -309,8 +309,8 @@ To opt in, set the plugin options, leaving other settings intact:
       "harnesses": {
         "antigravity": {
           "transport": "acp",
-          "acpCommand": "/absolute/path/to/agy_acp_server.par",
-          "acpArgs": ["--uid="],
+          "acpCommand": "/absolute/path/to/agy",
+          "acpArgs": ["acp"],
           "acpApprovedCommands": []
         }
       }
@@ -326,9 +326,11 @@ model, and effort arguments as before. ACP accepts a requested model or effort
 only if the server advertises the selection; **the wrapper should omit its
 hard-coded model and effort defaults for ACP**.
 
-ACP defaults to `auto_edit`, verified against advertised session modes or
-config options. It refuses to run if the mode is unavailable rather than
-silently falling back. ACP permission requests are answered non-interactively:
+The ACP client selects an advertised `accept-edits` mode (native CLI) or the
+legacy `auto_edit` mode. Config-option responses must confirm the selected mode.
+It refuses to run if a supported edit mode is unavailable or unconfirmed rather
+than falling back to the default or a bypass mode. ACP permission requests are
+answered non-interactively:
 workspace file edits with concrete in-workspace paths are approved once;
 everything else is denied, except **exact** `acpApprovedCommands` strings
 in `full` mode. Leave this array empty until necessary. Project scripts
@@ -342,6 +344,13 @@ rejected for ACP, rather than silently running uncontained. Sessions are
 resumed only for the same task. Each call uses a new ACP server process,
 cancellation/timeout terminates its process group, and tool events are
 forwarded as progress.
+
+ACP stdout must contain only newline-delimited JSON-RPC. Non-JSON output fails
+the delegation; the protocol error is preserved instead of being masked by
+process termination. Results retain the actual process exit code or signal
+independently of task status: a completed turn may still be followed by
+intentional SIGTERM cleanup. Truncated stderr is reported separately from a
+truncated agent response.
 
 Run `pnpm test` and `pnpm run check` from the checkout. Then run a live
 plan, edit, build/test, deny, cancellation, and resume smoke test on the
