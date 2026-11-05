@@ -9,6 +9,7 @@ import {
   parseHarnessOutput,
 } from "./harnesses.js"
 import { buildWorkerPrompt } from "./prompt.js"
+import { runAntigravityAcp } from "./acp.js"
 import { findExecutable, runProcess, subprocessEnvironment } from "./runner.js"
 import { acquireWorkspaceLock, resolveWorkspace } from "./workspace.js"
 import { dungeonKey, GUEST_DISCOVERY, inspectDungeon, persistDungeonSession, resumeBinding, runDungeonGuarded, sameResumeBinding } from "./dungeon.js"
@@ -147,7 +148,7 @@ export default Plugin.define({
             let release
             try {
               const harness = getHarness(definition.id, options)
-              if (harness.profile?.type !== "dungeon") row.available = Boolean(await findExecutable(harness.command))
+              if (harness.profile?.type !== "dungeon") row.available = Boolean(await findExecutable(harness.transport === "acp" ? harness.acpCommand : harness.command))
               else {
                 const session = await ctx.session.get({ sessionID: context.sessionID })
                 const workspace = await resolveWorkspace(session)
@@ -235,11 +236,16 @@ export default Plugin.define({
           const resolved = resolveModelSelection(harness.models, { model: input.model, effort: input.effort })
           selection = selectionReport(resolved)
           const profile = { executionProfile: harness.executionProfile }
-
           const isDungeon = harness.profile?.type === "dungeon"
-          const executable = isDungeon ? harness.command : await findExecutable(harness.command)
+          // ACP has no verified read-only mode: keep vendor-enforced CLI plan mode.
+          const useACP = harness.id === "antigravity" && harness.transport === "acp" && input.mode !== "plan"
+          if (useACP && harness.profile) {
+            return failure(harness.id, "ACP transport does not support executionProfiles; configure containment separately", { ...profile, ...selection })
+          }
+          const selectedCommand = useACP ? harness.acpCommand : harness.command
+          const executable = isDungeon ? selectedCommand : await findExecutable(selectedCommand)
           if (!executable) {
-            return failure(harness.id, `CLI executable not found: ${harness.command}`, {
+            return failure(harness.id, `Executable not found: ${selectedCommand}`, {
               installHint: harness.installHint,
               ...selection,
             })
@@ -263,16 +269,22 @@ export default Plugin.define({
             workspace = await resolveWorkspace(session, input.workingDirectory)
             const requestedMode = input.mode ?? "edit"
             prompt = buildWorkerPrompt(input.prompt, requestedMode)
-            invocation = buildInvocation(harness, {
-              prompt,
-              mode: requestedMode,
-              sessionID: input.sessionID,
-              model: resolved.model,
-              effort: resolved.effort,
-              timeoutSeconds: resolveTimeoutSeconds(input.timeoutSeconds, options),
-            })
-            launchArgs = invocation.args
-            if (harness.profile && !isDungeon) {
+            if (useACP) {
+              if (!["edit", "full"].includes(requestedMode)) throw new Error("unsupported ACP mode: " + requestedMode)
+              invocation = { mode: requestedMode }
+              launchArgs = harness.acpArgs
+            } else {
+              invocation = buildInvocation(harness, {
+                prompt,
+                mode: requestedMode,
+                sessionID: input.sessionID,
+                model: resolved.model,
+                effort: resolved.effort,
+                timeoutSeconds: resolveTimeoutSeconds(input.timeoutSeconds, options),
+              })
+              launchArgs = invocation.args
+            }
+            if (harness.profile && !isDungeon && !useACP) {
               launchCommand = await findExecutable(harness.profile.command)
               if (!launchCommand) throw new Error(`execution profile launcher not found: ${harness.executionProfile}`)
               launchArgs = [...harness.profile.args.map((arg) => arg.replaceAll("{cwd}", workspace.cwd)),
@@ -304,7 +316,19 @@ export default Plugin.define({
               status: `Delegating to ${harness.label} (${invocation.mode})`,
             })
 
-            const execution = isDungeon ? await runDungeonGuarded({
+            const execution = useACP ? await runAntigravityAcp({
+              command: launchCommand,
+              args: launchArgs,
+              cwd: workspace.cwd,
+              env: subprocessEnvironment([...harness.envAllowlist, "GEMINI_HOME", "ANTIGRAVITY_HARNESS_PATH", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]),
+              prompt, mode: invocation.mode, sessionID: input.sessionID,
+              model: resolved.model, effort: resolved.effort,
+              allowedCommands: harness.acpApprovedCommands,
+              timeoutMs: timeoutSeconds * 1000,
+              maxOutputBytes: options.maxOutputBytes,
+              signal: context.signal,
+              onProgress: context.progress,
+            }) : isDungeon ? await runDungeonGuarded({
               harness, binding, args: [harness.command, ...invocation.args],
               timeoutMs: timeoutSeconds * 1000, maxOutputBytes: options.maxOutputBytes, signal: context.signal,
             }) : await runProcess({
@@ -317,9 +341,15 @@ export default Plugin.define({
               signal: context.signal,
             })
 
-            const parsed = parseHarnessOutput(harness, execution.stdout, {
-              truncated: execution.stdoutTruncated,
-            })
+            const parsed = useACP ? {
+              response: execution.response,
+              sessionID: execution.sessionID,
+              providerStatus: execution.providerStatus,
+              deniedActions: execution.deniedActions,
+              protocolError: execution.protocolError,
+              error: execution.error,
+              providerFailed: execution.status === "failed",
+            } : parseHarnessOutput(harness, execution.stdout, { truncated: execution.stdoutTruncated })
             if (isDungeon && parsed.sessionID) {
               if (execution.dungeon.cleanup !== "confirmed" || execution.dungeon.transportError ||
                   execution.dungeon.protocolError || parsed.protocolError) {
@@ -354,6 +384,7 @@ export default Plugin.define({
               status,
               harness: harness.id,
               mode: invocation.mode,
+              transport: useACP ? "acp" : "cli",
               ...profile,
               ...selection,
               ...(isDungeon ? { dungeon: { ...execution.dungeon, config: binding.config,

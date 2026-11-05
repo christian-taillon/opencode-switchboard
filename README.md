@@ -381,3 +381,79 @@ pnpm run check
 - Codex resume and per-delegation model override are disabled.
 - Harness CLI flags can change upstream. Switchboard keeps those differences inside adapters so they can be updated without changing the OpenCode-facing tool contract.
 - The package currently pins `@opencode/plugin` `2.0.4`. Validate plugin loading against the OpenCode 2 build you run with `opencode plugin list` before relying on Switchboard.
+
+
+## Experimental Antigravity ACP transport
+
+The normal Antigravity CLI remains the default. A bounded ACP client can run
+Google's official `agy acp` server over stdio without changing Claude,
+Gemini, or Codex. This is **experimental**, not a verified production integration.
+
+Install Antigravity CLI with native ACP support (`agy acp --help`) and sign in
+using `agy acp --login` in an interactive terminal. Google's documented native
+ACP invocation reuses that cached login:
+https://antigravity.google/docs/cli/acp
+
+The separately distributed `agy_acp_server.par` is a different runtime; do not
+assume a native CLI login authenticates it. Existing standalone installations
+can still supply their own explicit command and arguments. Switchboard does not
+download executables, read tokens, or perform interactive authentication.
+
+To opt in, set the plugin options, leaving other settings intact:
+
+```jsonc
+{
+  "plugins": [{
+    "package": "/absolute/path/to/switchboard",
+    "options": {
+      "harnesses": {
+        "antigravity": {
+          "transport": "acp",
+          "acpCommand": "/absolute/path/to/agy",
+          "acpArgs": ["acp"],
+          "acpApprovedCommands": []
+        }
+      }
+    }
+  }]
+}
+```
+
+The CLI remains available: set `transport: "cli"` to revert. `plan`
+requests always run through the CLI's `--mode=plan` while ACP read-only
+semantics remain unverified. Use the same explicit task contract, session ID,
+model, and effort arguments as before. ACP accepts a requested model or effort
+only if the server advertises the selection; **the wrapper should omit its
+hard-coded model and effort defaults for ACP**.
+Configured model roles, including `default`, still apply before ACP selection;
+leave `models.default` unset to retain the server's model and effort defaults.
+
+The ACP client selects an advertised `accept-edits` mode (native CLI) or the
+legacy `auto_edit` mode. Config-option responses must confirm the selected mode.
+It refuses to run if a supported edit mode is unavailable or unconfirmed rather
+than falling back to the default or a bypass mode. ACP permission requests are
+answered non-interactively:
+workspace file edits with concrete in-workspace paths are approved once;
+everything else is denied, except **exact** `acpApprovedCommands` strings
+in `full` mode. Leave this array empty until necessary. Project scripts
+can execute arbitrary code, so only approve known commands for trusted
+projects. Denied requests fail the delegation even if the agent returns text.
+
+ACP does not inherit OpenCode's shell permissions, and path-based permission
+checks are **not OS containment**. Use a disposable checkout for initial
+validation. The existing `executionProfiles` configuration is deliberately
+rejected for ACP, rather than silently running uncontained. Sessions are
+resumed only for the same task. Each call uses a new ACP server process,
+cancellation/timeout terminates its process group, and tool events are
+forwarded as progress.
+
+ACP stdout must contain only newline-delimited JSON-RPC. Non-JSON output fails
+the delegation; the protocol error is preserved instead of being masked by
+process termination. Results retain the actual process exit code or signal
+independently of task status: a completed turn may still be followed by
+intentional SIGTERM cleanup. Truncated stderr is reported separately from a
+truncated agent response.
+
+Run `pnpm test` and `pnpm run check` from the checkout. Then run a live
+plan, edit, build/test, deny, cancellation, and resume smoke test on the
+target Linux workstation before changing the default or widening approvals.

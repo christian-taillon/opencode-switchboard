@@ -282,6 +282,10 @@ export function getHarness(id, options) {
     profile,
     envAllowlist: configured.envAllowlist,
     models: configured.models ?? {},
+    transport: configured.transport,
+    acpCommand: configured.acpCommand,
+    acpArgs: configured.acpArgs,
+    acpApprovedCommands: configured.acpApprovedCommands,
   }
 }
 
@@ -318,6 +322,8 @@ export function harnessDefinitions(options) {
       label: definition.label,
       command: configured.command ?? definition.command,
       enabled: configured.enabled,
+      transport: configured.transport,
+      acpCommand: configured.transport === "acp" ? configured.acpCommand : undefined,
       executionProfile: configured.executionProfile ?? "host",
       resume: definition.resume,
       installHint: definition.installHint,

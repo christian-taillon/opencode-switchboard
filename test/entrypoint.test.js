@@ -45,6 +45,46 @@ test("setup registers a schema-valid skill and both tools", async () => {
   assert.equal(tools.find((tool) => tool.name === "delegate").input.properties.effort.type, "string")
 })
 
+test("ACP delegation retains native mode, omitted selectors, and failure diagnostics", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-acp-result-"))
+  const fixture = fileURLToPath(new URL("../fixtures/acp-server.mjs", import.meta.url))
+  try {
+    for (const scenario of ["native", "auth-required", "bad-stdout", "exit-before-init"]) {
+      let delegate
+      await plugin.setup({
+        options: { harnesses: { antigravity: { transport: "acp", acpCommand: process.execPath, acpArgs: [fixture, scenario] } } },
+        session: { get: async () => ({ location: { directory } }) },
+        skill: { transform: async (callback) => callback({ add: () => {} }) },
+        tool: {
+          transform: async (callback) => callback({
+            namespace: () => {},
+            add: (tool) => { if (tool.name === "delegate") delegate = tool },
+          }),
+        },
+      })
+      const output = await delegate.execute({ harness: "antigravity", mode: "edit", prompt: "fixture", timeoutSeconds: 5 }, {
+        sessionID: "ses_fixture",
+        progress: async () => {},
+      })
+      const result = JSON.parse(output.content)
+      assert.equal(result.transport, "acp")
+      assert.equal(result.mode, "edit")
+      assert.equal(result.requestedModel, "unknown")
+      assert.equal(result.requestedEffort, undefined)
+      assert.equal(result.status, scenario === "native" ? "completed" : "failed")
+      if (scenario === "auth-required") assert.equal(result.error, "ACP -32000: Authentication required")
+      if (scenario === "bad-stdout") {
+        assert.ok(result.protocolError)
+        assert.equal(result.error, result.protocolError)
+        assert.equal(result.signal, "SIGTERM")
+      }
+      if (scenario === "exit-before-init") assert.equal(result.exitCode, 23)
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test("delegate fails closed on Antigravity denials and empty success, retaining diagnostics", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-result-"))
   try {
@@ -111,6 +151,75 @@ process.stderr.write(${JSON.stringify(notice)})
     }
   } finally {
     await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("model roles reach ACP while plan mode and live listing retain the CLI transport", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-model-transport-"))
+  const fixture = fileURLToPath(new URL("../fixtures/acp-server.mjs", import.meta.url))
+  try {
+    const command = path.join(directory, "agy-fixture")
+    await writeFile(command, `#!${process.execPath}
+const args = process.argv.slice(2)
+if (args[0] === 'models') { console.log('test-model  Test Model'); process.exit(0) }
+if (!args.includes('--mode=plan') || args[args.indexOf('--model') + 1] !== 'test-model' ||
+    args[args.indexOf('--effort') + 1] !== 'medium') process.exit(1)
+console.log(JSON.stringify({ status: 'SUCCESS', response: 'CLI plan completed' }))
+`)
+    await chmod(command, 0o700)
+    const tools = {}
+    await plugin.setup({
+      options: { harnesses: {
+        antigravity: { command, transport: "acp", acpCommand: process.execPath, acpArgs: [fixture, "require-selection"],
+          models: { default: { model: "test-model", effort: "medium" }, chosen: { model: "test-model", effort: "medium" } } },
+        claude: { enabled: false, command: process.execPath },
+      } },
+      session: { get: async () => ({ location: { directory } }) },
+      skill: { transform: async (fn) => fn({ add() {} }) },
+      tool: { transform: async (fn) => fn({ namespace() {}, add(tool) { tools[tool.name] = tool } }) },
+    })
+    const context = { sessionID: "ses_fixture", progress: async () => {} }
+    const rows = JSON.parse((await tools.harnesses.execute({}, context)).content).harnesses
+    assert.equal(rows[0].available, true)
+    assert.equal(rows[1].available, false)
+    for (const input of [{ mode: "edit" }, { mode: "edit", model: "chosen" }, { mode: "plan", model: "chosen" }]) {
+      const result = JSON.parse((await tools.delegate.execute({ harness: "antigravity", prompt: "fixture", ...input }, context)).content)
+      assert.equal(result.status, "completed", result.error)
+      assert.equal(result.transport, input.mode === "plan" ? "cli" : "acp")
+      assert.equal(result.requestedRole, input.model ?? "default")
+      assert.equal(result.requestedModel, "test-model")
+      assert.equal(result.requestedEffort, "medium")
+      assert.equal(result.warnings, undefined)
+      assert.equal(result.response, input.mode === "plan" ? "CLI plan completed" : "completed")
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("ACP rejects execution profiles before model discovery or process launch", async () => {
+  for (const profile of [
+    { type: "launcher", approved: true, command: process.execPath, args: [] },
+    { type: "dungeon", approved: true, command: process.execPath, config: "/nonexistent/dungeon.json" },
+  ]) {
+    let delegate
+    await plugin.setup({
+      options: { executionProfiles: { isolated: profile }, harnesses: { antigravity: {
+        transport: "acp", acpCommand: "/nonexistent/acp", executionProfile: "isolated",
+        models: { default: { model: "test-model" } },
+      } } },
+      session: { get: async () => { throw new Error("must not inspect the workspace or list models") } },
+      skill: { transform: async (fn) => fn({ add() {} }) },
+      tool: { transform: async (fn) => fn({ namespace() {}, add(tool) { if (tool.name === "delegate") delegate = tool } }) },
+    })
+    for (const mode of ["edit", "full"]) {
+      const result = JSON.parse((await delegate.execute({ harness: "antigravity", prompt: "fixture", mode }, {
+        sessionID: "ses_fixture", progress: async () => {},
+      })).content)
+      assert.equal(result.status, "failed")
+      assert.match(result.error, /ACP transport does not support executionProfiles/)
+      assert.equal(result.executionProfile, "isolated")
+    }
   }
 })
 
