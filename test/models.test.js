@@ -9,6 +9,23 @@ import {
   selectionReport,
 } from "../src/models.js"
 
+test("model listing accepts Antigravity's tab-separated selectors and untiered Orchestrators", () => {
+  const live = parseModelList(`Fetching available models...
+gemini-4-neon-xhigh\tGemini 4 Neon (XHigh)
+gemini-4-argon-medium\tGemini 4 Argon (Medium)
+gemini-4-hydrogen-high\tGemini 4 Hydrogen (High)
+gemini-pro-orchestrator-neon\tOrchestrator (Neon)
+gemini-pro-orchestrator-argon\tOrchestrator (Argon)
+`)
+  assert.deepEqual(live, [
+    { id: "gemini-4-neon-xhigh", label: "Gemini 4 Neon (XHigh)" },
+    { id: "gemini-4-argon-medium", label: "Gemini 4 Argon (Medium)" },
+    { id: "gemini-4-hydrogen-high", label: "Gemini 4 Hydrogen (High)" },
+    { id: "gemini-pro-orchestrator-neon", label: "Orchestrator (Neon)" },
+    { id: "gemini-pro-orchestrator-argon", label: "Orchestrator (Argon)" },
+  ])
+})
+
 test("model listing parses IDs, bounds errors, and validates resolved role selections", () => {
   const live = parseModelList("Model ID  Display name\nclaude-opus-5-5-medium  Claude Opus\ngemini-3.8-flash-medium  Gemini Flash\n")
   assert.deepEqual(live, [

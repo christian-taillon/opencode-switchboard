@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Scope CLI model catalogs to the effective workspace, keep ACP selection independent of the CLI catalog, require server confirmation of explicit ACP model/effort settings, and avoid launching already-cancelled ACP requests.
+- Carry read-only host/static-source and guest-owned writable-state boundaries in every external worker prompt; link the per-harness native configuration-write validation tracked by Dungeon #48.
+- Expose current Antigravity model discovery through `switchboard_harnesses({ includeModels: true })`, parse the CLI's tab-separated listings, and refresh model/effort and plan-dependent quota guidance without changing routing defaults.
 - Add opt-in Dungeon execution profiles: guest executable discovery, verified Ready/copy admission, bounded machine-stream decoding, durable environment-bound resume, and reuse blocking after uncertain cleanup. Preserve manual lifecycle/export and host defaults.
 
 - Fail Claude delegations on native permission denials even with exit `0` and subtype `success`; preserve denied actions and vendor-reported `modelUsage` metadata.

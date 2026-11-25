@@ -41,7 +41,10 @@ function handle(message) {
     return result(id, { configOptions: configs })
   }
   if (method === "session/set_config_option") {
-    if (scenario !== "unacknowledged-mode") {
+    const ignored = scenario === "unacknowledged-mode" ||
+      (scenario === "unacknowledged-model" && params.configId === "model") ||
+      (scenario === "unacknowledged-effort" && params.configId === "thought_level")
+    if (!ignored) {
       const config = configs.find((item) => item.id === params.configId)
       config.currentValue = params.value
       if (params.configId === "mode") currentMode = params.value

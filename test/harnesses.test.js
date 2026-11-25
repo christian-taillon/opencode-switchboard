@@ -89,6 +89,7 @@ test("Claude full mode uses auto permissions, not bypass", () => {
 
 test("Antigravity and Claude preserve native model/effort selectors on new and resumed calls", () => {
   const pairs = [
+    ["antigravity", "gemini-4-neon-xhigh", "xhigh"],
     ["antigravity", "gemini-3.8-flash-medium", "medium"],
     ["claude", "claude-sonnet-5-5", "xhigh"],
     ["claude", "claude-opus-5-5", "high"],

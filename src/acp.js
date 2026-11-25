@@ -58,6 +58,11 @@ async function applyConfig(send, sessionID, state, id, value) {
   selectConfigValue(state.configOptions ?? [], id, value)
   const changed = await send("session/set_config_option", { sessionId: sessionID, configId: id, value })
   if (Array.isArray(changed?.configOptions)) state.configOptions = changed.configOptions
+  const selected = Array.isArray(changed?.configOptions)
+    ? changed.configOptions.find((option) => option.id === id || option.configId === id) : undefined
+  if (selected?.currentValue !== value) {
+    throw new Error("Antigravity ACP did not confirm the requested " + (id === "mode" ? "edit mode" : id) + ": " + value)
+  }
 }
 
 /** Run one bounded ACP turn with Google's official Antigravity ACP stdio server. */
@@ -67,6 +72,12 @@ export async function runAntigravityAcp({
 }) {
   if (mode === "plan") throw new Error("Antigravity ACP has no verified read-only mode; use the CLI plan transport")
   const started = Date.now()
+  if (signal?.aborted) return {
+    status: "aborted", sessionID, response: "", providerStatus: "failed",
+    error: "ACP run was aborted before process launch", stderr: "",
+    stdoutTruncated: false, stderrTruncated: false, outputTruncated: false,
+    exitCode: null, signal: null, durationMs: Date.now() - started,
+  }
   const child = spawn(command, args, { cwd, env, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"] })
   let input = Buffer.alloc(0)
   let stderr = Buffer.alloc(0)
@@ -230,8 +241,6 @@ export async function runAntigravityAcp({
     if (!editMode) throw new Error("Antigravity ACP does not advertise a supported edit mode (accept-edits or auto_edit)")
     if (modeConfig) {
       await applyConfig(request, externalID, settings, "mode", editMode)
-      const selected = settings.configOptions?.find((item) => item.id === "mode" || item.configId === "mode")
-      if (selected?.currentValue !== editMode) throw new Error("Antigravity ACP did not confirm the requested edit mode: " + editMode)
     } else {
       await request("session/set_mode", { sessionId: externalID, modeId: editMode })
     }

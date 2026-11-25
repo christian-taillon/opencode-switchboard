@@ -103,6 +103,32 @@ test("ACP rejects unsupported model instead of substituting", async () => {
   assert.match(result.error, /does not offer model/)
 })
 
+test("ACP refuses an unconfirmed model selection before sending the task", async () => {
+  const result = await runAntigravityAcp(input({ args: [fixture, "unacknowledged-model"], model: "test-model" }))
+  assert.equal(result.status, "failed")
+  assert.equal(result.error, "Antigravity ACP did not confirm the requested model: test-model")
+  assert.equal(result.response, "")
+})
+
+test("ACP refuses an unconfirmed effort selection before sending the task", async () => {
+  const result = await runAntigravityAcp(input({ args: [fixture, "unacknowledged-effort"], effort: "medium" }))
+  assert.equal(result.status, "failed")
+  assert.equal(result.error, "Antigravity ACP did not confirm the requested thought_level: medium")
+  assert.equal(result.response, "")
+})
+
+test("an already-cancelled ACP call does not attempt to launch its executable", async () => {
+  const controller = new AbortController()
+  controller.abort()
+  const result = await runAntigravityAcp(input({
+    command: "/missing-switchboard-acp-executable", signal: controller.signal,
+  }))
+  assert.equal(result.status, "aborted")
+  assert.equal(result.exitCode, null)
+  assert.equal(result.signal, null)
+  assert.equal(result.error, "ACP run was aborted before process launch")
+})
+
 test("ACP scoped approval denies unexpected commands", async () => {
   const denied = await runAntigravityAcp(input({ prompt: "approve command", mode: "full" }))
   assert.equal(denied.status, "failed")

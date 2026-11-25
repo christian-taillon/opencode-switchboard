@@ -11,11 +11,11 @@ export function unsupportedListingError(harnessID) {
   return `live model listing not supported for ${harnessID}`
 }
 
-// Parses "<id><2+ spaces><label>" lines. Blank or unparseable lines are skipped.
+// Accept the CLI's tab separator and space-aligned listings.
 export function parseModelList(stdout) {
   const models = []
   for (const line of String(stdout ?? "").split(/\r?\n/)) {
-    const match = /^\s*(\S+)[ \t]{2,}(\S.*?)\s*$/.exec(line)
+    const match = /^\s*(\S+)(?:[ \t]*\t[ \t]*| {2,})(\S.*?)\s*$/.exec(line)
     if (match) models.push({ id: match[1], label: match[2] })
   }
   return models
@@ -79,20 +79,20 @@ export function modelsFromExecution(harness, execution) {
   return parseModelList(execution.stdout)
 }
 
-// In-memory, per-harness cache of successful live listings. Failures are not cached.
+// Retain only the latest workspace per harness, keeping the cache bounded.
 export function createModelCatalog({ list, now = Date.now, ttlMs = MODEL_CACHE_TTL_MS }) {
   const cache = new Map()
 
-  async function live(harness, context) {
+  async function live(harness, context, scope) {
     if (!harness.modelListArgs) return { live: null, liveError: unsupportedListingError(harness.id) }
     const hit = cache.get(harness.id)
-    if (hit && now() - hit.at < ttlMs) return { live: hit.models.map((entry) => ({ ...entry })) }
+    if (hit && hit.scope === scope && now() - hit.at < ttlMs) return { live: hit.models.map((entry) => ({ ...entry })) }
     try {
       const models = await list(harness, context)
       if (!Array.isArray(models) || models.length === 0) {
         throw new Error(`${harness.label ?? harness.id} model listing returned no parseable models`)
       }
-      cache.set(harness.id, { at: now(), models: models.map((entry) => ({ ...entry })) })
+      cache.set(harness.id, { scope, at: now(), models: models.map((entry) => ({ ...entry })) })
       return { live: models.map((entry) => ({ ...entry })) }
     } catch (error) {
       return { live: null, liveError: error?.message ?? String(error) }

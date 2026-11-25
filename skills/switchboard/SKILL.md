@@ -26,6 +26,18 @@ implementation, fixes, tests, and documentation to the parent for integration in
 that outcome. Follow the repository's split criteria and explicit lifecycle
 authority; do not create a worker PR or an integration-only PR by default.
 
+## Discover current Antigravity models
+
+Use `tools.switchboard.harnesses({ includeModels: true })` through Code Mode before choosing an unfamiliar Antigravity CLI model. The Antigravity row returns `models.roles`, `models.live` (`id` and `label`), and `models.liveError` on discovery failure. This runs bounded `agy models` discovery through the configured execution profile, not an inference task; successful listings are cached for five minutes per canonical working directory. An operator can also run `agy models` directly for host CLI selectors.
+
+Use exact discovered CLI IDs. Tiered selectors encode effort (for example `gemini-4-neon-xhigh` with `xhigh`, or `gemini-4-argon-medium` with `medium`); not every family supports every tier. Orchestrator IDs have no effort suffix: do not manufacture one or infer effort. A UI-only model is not a verified CLI selector. ACP uses its own advertised selections and must confirm explicit model/effort requests before a task is sent; do not reject an exact parent-requested ACP selector solely because it is absent from the CLI catalog. When no explicit ACP selection is requested, preserve its defaults.
+
+Model discovery does not establish authentication, available quota, or the resolved model. Gemini and Claude/GPT quota groups differ, and Argon's allocation depends on the subscription plan. Report current vendor evidence or unknown; do not treat a pasted quota snapshot as a live balance. Discovery never authorizes model substitution, permission escalation, or a change to the parent's routing/fallback policy.
+
+## Native configuration in contained work
+
+Apply [Dungeon #48](https://github.com/Dark-Roast-Cyber/dungeon/issues/48) to each harness, not each model/persona: static agent definitions and plugin source stay read-only; native mutable preferences require guest-owned writable files and parent directories for atomic saves; credentials and session state remain guest-owned. Do not widen host mounts or permissions when a native save fails. Report the exact blocked native action and preserve the environment for deliberate recovery. A successful startup or metadata command does not validate preference persistence, atomic save, or another harness's import support.
+
 ## Foreground and sessions
 
 Switchboard v0.0.1 runs delegations synchronously. If the current outcome depends on a harness result, call `switchboard_delegate` and wait for its terminal result. Never return a handoff that merely says the external harness is still running.
