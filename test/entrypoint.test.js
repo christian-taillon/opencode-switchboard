@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -43,6 +43,166 @@ test("setup registers a schema-valid skill and both tools", async () => {
   assert.equal(skill.autoinvoke, true)
   assert.deepEqual(tools.map((tool) => tool.name), ["harnesses", "delegate"])
   assert.equal(tools.find((tool) => tool.name === "delegate").input.properties.effort.type, "string")
+  assert.equal(tools.find((tool) => tool.name === "harnesses").input.properties.includeModels.type, "boolean")
+})
+
+test("harness discovery exposes live selectors on request without starting a task", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-discover-models-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const command = path.join(directory, "agy-fixture")
+  const calls = path.join(directory, "calls")
+  await writeFile(command, `#!${process.execPath}
+const fs = require('node:fs')
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)) + '\\n')
+if (process.argv.length !== 3 || process.argv[2] !== 'models') process.exit(1)
+console.log('gemini-4-neon-xhigh\\tGemini 4 Neon (XHigh)')
+console.log('gemini-pro-orchestrator-neon\\tOrchestrator (Neon)')
+`)
+  await chmod(command, 0o700)
+  let harnesses
+  await plugin.setup({
+    options: { harnesses: {
+      antigravity: { command, models: { deep: { model: "gemini-4-neon-xhigh", effort: "xhigh" } } },
+      claude: { enabled: false, command },
+      gemini: { enabled: false, command },
+      codex: { enabled: false, command },
+    } },
+    session: { get: async () => ({ location: { directory } }) },
+    skill: { transform: async (fn) => fn({ add() {} }) },
+    tool: { transform: async (fn) => fn({ namespace() {}, add(tool) { if (tool.name === "harnesses") harnesses = tool } }) },
+  })
+  const context = { sessionID: "ses_fixture", progress: async () => {} }
+  const basic = JSON.parse((await harnesses.execute({}, context)).content)
+  assert.equal(basic.harnesses[0].models, undefined)
+  await assert.rejects(readFile(calls), { code: "ENOENT" })
+  const discovered = JSON.parse((await harnesses.execute({ includeModels: true }, context)).content)
+  assert.equal(discovered.harnesses[0].available, true)
+  assert.deepEqual(discovered.harnesses[0].models, {
+    roles: { deep: { model: "gemini-4-neon-xhigh", effort: "xhigh" } },
+    live: [
+      { id: "gemini-4-neon-xhigh", label: "Gemini 4 Neon (XHigh)" },
+      { id: "gemini-pro-orchestrator-neon", label: "Orchestrator (Neon)" },
+    ],
+  })
+  assert.equal(discovered.harnesses[1].available, false)
+  assert.equal(discovered.harnesses[1].models, undefined)
+  await harnesses.execute({ includeModels: true }, context)
+  assert.equal(await readFile(calls, "utf8"), '["models"]\n')
+})
+
+test("harness discovery reports a listing failure separately from executable availability", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-discovery-error-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const command = path.join(directory, "agy-fixture")
+  await writeFile(command, `#!${process.execPath}
+process.stderr.write('model service unavailable')
+process.exit(1)
+`)
+  await chmod(command, 0o700)
+  let harnesses
+  await plugin.setup({
+    options: { harnesses: {
+      antigravity: { command },
+      claude: { enabled: false },
+      gemini: { enabled: false },
+      codex: { enabled: false },
+    } },
+    session: { get: async () => ({ location: { directory } }) },
+    skill: { transform: async (fn) => fn({ add() {} }) },
+    tool: { transform: async (fn) => fn({ namespace() {}, add(tool) { if (tool.name === "harnesses") harnesses = tool } }) },
+  })
+  const result = JSON.parse((await harnesses.execute({ includeModels: true }, {
+    sessionID: "ses_fixture", progress: async () => {},
+  })).content)
+  assert.equal(result.harnesses[0].available, true)
+  assert.deepEqual(result.harnesses[0].models, {
+    roles: {}, live: null, liveError: "model service unavailable",
+  })
+})
+
+test("model discovery follows a moved session instead of reusing another workspace's catalog", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "switchboard-model-scope-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const first = path.join(root, "first")
+  const second = path.join(root, "second")
+  await mkdir(first)
+  await mkdir(second)
+  const command = path.join(root, "agy-fixture")
+  await writeFile(command, `#!${process.execPath}
+console.log(require('node:path').basename(process.cwd()) + '\\tWorkspace Model')
+`)
+  await chmod(command, 0o700)
+  let directory = first
+  let harnesses
+  await plugin.setup({
+    options: { harnesses: {
+      antigravity: { command },
+      claude: { enabled: false }, gemini: { enabled: false }, codex: { enabled: false },
+    } },
+    session: { get: async () => ({ location: { directory } }) },
+    skill: { transform: async (fn) => fn({ add() {} }) },
+    tool: { transform: async (fn) => fn({ namespace() {}, add(tool) { if (tool.name === "harnesses") harnesses = tool } }) },
+  })
+  const context = { sessionID: "ses_moving", progress: async () => {} }
+  const initial = JSON.parse((await harnesses.execute({ includeModels: true }, context)).content)
+  assert.deepEqual(initial.harnesses[0].models.live, [{ id: "first", label: "Workspace Model" }])
+  directory = second
+  const moved = JSON.parse((await harnesses.execute({ includeModels: true }, context)).content)
+  assert.deepEqual(moved.harnesses[0].models.live, [{ id: "second", label: "Workspace Model" }])
+})
+
+test("CLI model validation uses the delegation's requested subdirectory", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-model-cwd-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  await mkdir(path.join(directory, "sub"))
+  const command = path.join(directory, "agy-fixture")
+  await writeFile(command, `#!${process.execPath}
+if (process.argv[2] === 'models') console.log(require('node:path').basename(process.cwd()) + '-model\\tWorkspace Model')
+else console.log(JSON.stringify({ status: 'SUCCESS', response: 'subdirectory task completed' }))
+`)
+  await chmod(command, 0o700)
+  let delegate
+  await plugin.setup({
+    options: { harnesses: { antigravity: { command } } },
+    session: { get: async () => ({ location: { directory } }) },
+    skill: { transform: async (fn) => fn({ add() {} }) },
+    tool: { transform: async (fn) => fn({ namespace() {}, add(tool) { if (tool.name === "delegate") delegate = tool } }) },
+  })
+  const result = JSON.parse((await delegate.execute({
+    harness: "antigravity", prompt: "fixture", mode: "plan", model: "sub-model", workingDirectory: "sub",
+  }, { sessionID: "ses_fixture", progress: async () => {} })).content)
+  assert.equal(result.status, "completed", result.error)
+  assert.equal(result.requestedModel, "sub-model")
+  assert.equal(result.response, "subdirectory task completed")
+  assert.equal(result.warnings, undefined)
+})
+
+test("ACP model selection is not rejected by the separate CLI catalog", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "switchboard-acp-catalog-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const command = path.join(directory, "agy-fixture")
+  await writeFile(command, `#!${process.execPath}
+console.log('cli-only-model\\tCLI Model')
+`)
+  await chmod(command, 0o700)
+  const fixture = fileURLToPath(new URL("../fixtures/acp-server.mjs", import.meta.url))
+  let delegate
+  await plugin.setup({
+    options: { harnesses: { antigravity: {
+      command, transport: "acp", acpCommand: process.execPath, acpArgs: [fixture, "require-selection"],
+    } } },
+    session: { get: async () => ({ location: { directory } }) },
+    skill: { transform: async (fn) => fn({ add() {} }) },
+    tool: { transform: async (fn) => fn({ namespace() {}, add(tool) { if (tool.name === "delegate") delegate = tool } }) },
+  })
+  const result = JSON.parse((await delegate.execute({
+    harness: "antigravity", prompt: "fixture", mode: "edit", model: "test-model", effort: "medium",
+  }, { sessionID: "ses_fixture", progress: async () => {} })).content)
+  assert.equal(result.status, "completed", result.error)
+  assert.equal(result.transport, "acp")
+  assert.equal(result.requestedModel, "test-model")
+  assert.equal(result.requestedEffort, "medium")
+  assert.equal(result.warnings, undefined)
 })
 
 test("ACP delegation retains native mode, omitted selectors, and failure diagnostics", async () => {
@@ -161,7 +321,7 @@ test("model roles reach ACP while plan mode and live listing retain the CLI tran
     const command = path.join(directory, "agy-fixture")
     await writeFile(command, `#!${process.execPath}
 const args = process.argv.slice(2)
-if (args[0] === 'models') { console.log('test-model  Test Model'); process.exit(0) }
+if (args[0] === 'models') { console.log('test-model\\tTest Model'); process.exit(0) }
 if (!args.includes('--mode=plan') || args[args.indexOf('--model') + 1] !== 'test-model' ||
     args[args.indexOf('--effort') + 1] !== 'medium') process.exit(1)
 console.log(JSON.stringify({ status: 'SUCCESS', response: 'CLI plan completed' }))

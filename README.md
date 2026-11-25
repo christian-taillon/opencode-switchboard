@@ -11,7 +11,7 @@ Version `0.0.1` targets Linux and supports:
 
 The plugin exposes two OpenCode tools:
 
-- `switchboard_harnesses`: discover configured harnesses and executable availability on the host or selected guest.
+- `switchboard_harnesses`: discover configured harnesses and executable availability on the host or selected guest; optionally list configured model roles and current Antigravity model IDs.
 - `switchboard_delegate`: run one bounded harness task synchronously and return a normalized terminal result.
 
 It also registers the `switchboard` skill. Agent prompt awareness is opt-in through `awareAgents`; Switchboard does not assume any agent names or external OpenCode configuration.
@@ -68,10 +68,10 @@ The native wrappers use `openai/gpt-6-luna#high` to select and forward work; the
 
 | Harness | Default | Task-based alternatives |
 | --- | --- | --- |
-| Antigravity | `claude-opus-5-5-medium`, `medium` effort | `gemini-3.8-flash-medium`/`medium` for lightweight work or to preserve Claude quota (Gemini uses a separate quota pool); `claude-opus-5-5-high`/`high` for harder reasoning |
+| Antigravity CLI | `claude-opus-5-5-medium`, `medium` effort, when advertised | `gemini-3.8-flash-medium`/`medium` for lightweight work or to preserve Claude quota, only when allowed by parent policy; `claude-opus-5-5-high`/`high` for harder reasoning |
 | Claude Code | `claude-opus-5-5`, `high` effort | `claude-opus-5-5`/`xhigh` for exceptional work; `claude-sonnet-5-5`/`xhigh` for routine work; `claude-haiku-4-5` without effort for lightweight work |
 
-Parents can supply `externalModel` and `externalEffort` in the native subagent's task prompt. Explicit selections win; otherwise the wrapper chooses before starting and retains that pair on resume. The native OpenCode subagent tool's `model` argument changes the wrapper model, not the external harness. Unavailable selections are reported, not silently replaced. Future models are not selected until available and verified.
+Parents can supply `externalModel` and `externalEffort` in the native subagent's task prompt. Explicit selections win; otherwise the wrapper chooses before starting and retains that pair on resume. The native OpenCode subagent tool's `model` argument changes the wrapper model, not the external harness. Unavailable selections are reported, not silently replaced. The Antigravity wrapper discovers [current CLI selectors](#discover-antigravity-models) before choosing; ACP retains server defaults when no explicit selection is requested.
 
 Generic `switchboard_delegate` calls accept harness-native `model` and `effort` directly; omitted selectors use vendor defaults. `effort` is supported for Antigravity and Claude; unsupported harnesses reject it in this checkout. `requestedModel` and `requestedEffort` describe requested settings, not verified resolved metadata. Vendor-side caps or substitutions must still be checked.
 
@@ -217,6 +217,8 @@ Switchboard deliberately uses direct process spawning rather than a shell:
 
 External harnesses are a separate execution and security boundary. Switchboard spawns the vendor CLI directly, so OpenCode shell hooks, shell-command permission wrappers, Git identity guards, and other behavior attached specifically to OpenCode's own shell tool do not automatically apply to commands an external harness executes. Configure each vendor harness, its permissions, and its Git identity independently.
 
+For contained work, every worker receives the same storage boundary: host configuration, approved snapshots, and static agent/plugin source stay read-only; mutable preferences need guest-owned files and writable parent directories for native atomic saves; credentials and sessions remain guest-owned. A configuration-save failure is a blocker, not permission to widen a host mount. [Dungeon #48](https://github.com/Dark-Roast-Cyber/dungeon/issues/48) tracks native write-contract validation: its bounded plain-container OpenCode `cli.json` seed-once fix does not establish equivalent Claude Code, Codex, Antigravity, or Gemini import support. Switchboard does not import those settings or migrate existing environments.
+
 Delegations run in the calling session's workspace. A custom `workingDirectory` must resolve inside that workspace. This prevents a delegated tool call from silently switching Switchboard to an unrelated checkout.
 
 ## Configuration
@@ -247,7 +249,40 @@ For optional overrides, use the plugin object form with `package` and `options` 
 
 `command` is an executable name or path, not a shell string. `enabled: false` disables that harness for all callers of this plugin instance, including wrappers.
 
-Model roles expand to a harness-native model ID and optional effort; a call's explicit effort overrides the role. Unrecognized role names are passed through as raw model IDs. `pool` is descriptive metadata only. Live model validation is currently available for Antigravity (`agy models`); its successful listing is cached briefly. Listing failures do not block delegation but return a warning, and other harnesses are not live-validated. Set `validateModels: false` to disable validation.
+Model roles expand to a harness-native model ID and optional effort; a call's explicit effort overrides the role. Unrecognized role names are passed through as raw model IDs. `pool` is descriptive metadata only. Live CLI model validation is currently available for Antigravity (`agy models`), using the delegation's effective working directory; successful listings are cached for five minutes per harness and canonical working directory. Listing failures do not block CLI delegation but return a warning, and other harnesses are not live-validated. ACP selectors are validated against the ACP server, not the separate CLI catalog. Set `validateModels: false` to disable CLI validation.
+
+### Discover Antigravity models
+
+In Code Mode:
+
+```js
+const result = await tools.switchboard.harnesses({ includeModels: true })
+return result
+```
+
+Available harness rows include `models.roles` (configured selections), `models.live` (advertised `{ id, label }` entries), and `models.liveError` when listing fails or is unsupported. Without `includeModels`, discovery only checks executables. Antigravity discovery runs bounded `agy models` in the calling session's current directory through the configured host/launcher/Dungeon path. Moving a session or changing its directory does not reuse another directory's cached catalog. `validateModels: false` disables automatic CLI request validation, not this explicit discovery or ACP server selection checks. No inference task is started. Operators can run `agy models` directly to refresh the host CLI catalog.
+
+**Validated observation, 2026-11-23:** the installed CLI advertised:
+
+| Family | CLI selector | Advertised efforts |
+| --- | --- | --- |
+| Gemini 4 Neon | `gemini-4-neon-{effort}` | `low`, `medium`, `high`, `xhigh` |
+| Gemini 4 Carbon | `gemini-4-carbon-{effort}` | `low`, `medium`, `high` |
+| Gemini 4 Argon | `gemini-4-argon-{effort}` | `low`, `medium`, `high` |
+| Gemini 4 Hydrogen | `gemini-4-hydrogen-{effort}` | `low`, `medium`, `high`, `xhigh` |
+| Orchestrator (Neon) | `gemini-pro-orchestrator-neon` | Not encoded in ID |
+| Orchestrator (Carbon) | `gemini-pro-orchestrator` | Not encoded in ID |
+| Orchestrator (Argon) | `gemini-pro-orchestrator-argon` | Not encoded in ID |
+| Gemini 3.8 Flash | `gemini-3.8-flash-{effort}` | `low`, `medium`, `high` |
+| Claude Opus 5.5 | `claude-opus-5-5-{effort}` | `low`, `medium`, `high` |
+| Claude Sonnet 5.5 | `claude-sonnet-5-5-{effort}` | `low`, `medium`, `high` |
+| GPT-OSS 120B | `gpt-oss-120b-medium` | `medium` |
+
+Use exact discovered IDs, replacing `{effort}` only with an advertised tier and passing the matching `effort` unless explicitly overriding it. Do not append a tier to Orchestrator IDs or infer their effort. An earlier listing that day omitted Carbon and used `gemini-pro-orchestrator-g1-pro` for Argon; a later live listing returned the 27 selectors represented above. This table is an observation, not a built-in allowlist or a performance comparison. New families require no backend registry update when the CLI advertises them. ACP must separately advertise any requested selection.
+
+**User-reported quota UI, 2026-11-23:** Neon, Hydrogen, Orchestrator (Neon), and Flash share the Gemini group; Opus, Sonnet, and GPT-OSS share the Claude/GPT group. Both show weekly and five-hour limits. Argon's weekly quota is separate on paid Pro plans; Ultra includes its higher allowance in the larger Gemini bucket. Carbon and the Argon/Carbon Orchestrators' grouping is not established. Model discovery does not verify authentication, remaining quota, or resolved model/effort. Check current vendor evidence rather than saving the supplied 100% snapshot as a balance. Existing routing, fallback consent, and permission policies still apply.
+
+Example optional model roles:
 
 ```jsonc
 {
@@ -255,6 +290,8 @@ Model roles expand to a harness-native model ID and optional effort; a call's ex
     "antigravity": {
       "models": {
         "default": { "model": "claude-opus-5-5-medium", "effort": "medium", "pool": "claude" },
+        "argon": { "model": "gemini-4-argon-medium", "effort": "medium" },
+        "neon": { "model": "gemini-4-neon-xhigh", "effort": "xhigh", "pool": "gemini" },
         "lightweight": { "model": "gemini-3.8-flash-medium", "effort": "medium", "pool": "gemini" }
       }
     }
@@ -423,15 +460,18 @@ The CLI remains available: set `transport: "cli"` to revert. `plan`
 requests always run through the CLI's `--mode=plan` while ACP read-only
 semantics remain unverified. Use the same explicit task contract, session ID,
 model, and effort arguments as before. ACP accepts a requested model or effort
-only if the server advertises the selection; **the wrapper should omit its
+only if the server advertises and confirms the selection; the CLI model catalog
+does not gate ACP requests. **The wrapper should omit its
 hard-coded model and effort defaults for ACP**.
 Configured model roles, including `default`, still apply before ACP selection;
 leave `models.default` unset to retain the server's model and effort defaults.
 
 The ACP client selects an advertised `accept-edits` mode (native CLI) or the
-legacy `auto_edit` mode. Config-option responses must confirm the selected mode.
-It refuses to run if a supported edit mode is unavailable or unconfirmed rather
-than falling back to the default or a bypass mode. ACP permission requests are
+legacy `auto_edit` mode. Config-option responses must confirm the selected mode
+and every explicitly requested model or effort before the task is sent.
+It refuses to run if a setting is unavailable or unconfirmed rather
+than falling back to a default or bypass mode. Already-cancelled requests do not
+launch a server process. ACP permission requests are
 answered non-interactively:
 workspace file edits with concrete in-workspace paths are approved once;
 everything else is denied, except **exact** `acpApprovedCommands` strings

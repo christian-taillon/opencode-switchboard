@@ -282,13 +282,18 @@ process.on('SIGTERM',()=>helper.once('exit',()=>process.exit(1)));setInterval(()
     maxOutputBytes: 1024, terminationTarget: "leader", terminationGraceMs: 100 })
   assert.equal(forced.forcedTermination, true)
   assert.equal(forced.status, "timeout")
+  const readyToCancel = new AbortController()
+  const exitedOutput = []
   const exited = await runProcess({ command: process.execPath, args: ["-e", `
 const {spawn}=require('node:child_process');
-process.on('SIGTERM',()=>{spawn(process.execPath,['-e','setTimeout(()=>console.log("helper tail"),700)'],{stdio:['ignore','inherit','inherit']});setTimeout(()=>process.exit(1),100)});setInterval(()=>{},1000);
-`], timeoutMs: 200, maxOutputBytes: 1024, terminationTarget: "leader", terminationGraceMs: 300 })
+process.on('SIGTERM',()=>{spawn(process.execPath,['-e','setTimeout(()=>console.log("helper tail"),700)'],{stdio:['ignore','inherit','inherit']});process.exit(1)});setInterval(()=>{},1000);console.log("leader ready");
+`], timeoutMs: 5000, maxOutputBytes: 1024, signal: readyToCancel.signal,
+    terminationTarget: "leader", terminationGraceMs: 300,
+    onStdout: (chunk) => { exitedOutput.push(chunk); readyToCancel.abort() } })
   assert.equal(exited.exitCode, 1)
+  assert.equal(exited.status, "aborted")
   assert.equal(exited.forcedTermination, false)
-  assert.match(exited.stdout, /helper tail/)
+  assert.match(Buffer.concat(exitedOutput).toString(), /helper tail/)
   const retained = await runProcess({ command: process.execPath, args: ["-e", `
 require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>{},2400)'],{stdio:['ignore','inherit','inherit']});process.exit(1);
 `], timeoutMs: 5000, maxOutputBytes: 1024, terminationTarget: "leader" })

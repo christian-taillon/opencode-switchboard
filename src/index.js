@@ -26,7 +26,7 @@ import {
 const SKILL_LOCATION = fileURLToPath(new URL("../skills/switchboard/SKILL.md", import.meta.url))
 
 const AWARENESS =
-  "External coding harnesses are available through Switchboard. When another harness would materially help, load the `switchboard` skill and follow its delegation, foreground, and external-session discipline. Treat Switchboard workers as bounded external subagents whose output must be inspected before acceptance."
+  "External coding harnesses are available through Switchboard. When another harness would materially help, load the `switchboard` skill and follow its delegation, foreground, and external-session discipline. Discover current Antigravity model IDs with `switchboard_harnesses` and `includeModels: true` rather than guessing selectors. Treat Switchboard workers as bounded external subagents whose output must be inspected before acceptance."
 
 function withoutFrontmatter(markdown) {
   if (!markdown.startsWith("---\n")) return markdown.trim()
@@ -63,8 +63,7 @@ export default Plugin.define({
         maxOutputBytes: Math.min(options.maxOutputBytes, MODEL_LIST_MAX_OUTPUT_BYTES),
         signal: context.signal,
       }
-      const session = await ctx.session.get({ sessionID: context.sessionID })
-      const workspace = await resolveWorkspace(session)
+      const workspace = context.workspace
       if (harness.profile?.type === "dungeon") {
         const release = acquireWorkspaceLock(workspace.lockDirectory, harness.id)
         try {
@@ -95,6 +94,16 @@ export default Plugin.define({
     const catalog = createModelCatalog({
       list: async (harness, context) => modelsFromExecution(harness, await runAuxiliary(harness, harness.modelListArgs, context)),
     })
+
+    async function liveModels(harness, context, workspace) {
+      if (!harness.modelListArgs) return await catalog.live(harness, context)
+      try {
+        workspace ??= await resolveWorkspace(await ctx.session.get({ sessionID: context.sessionID }))
+        return await catalog.live(harness, { workspace, signal: context.signal }, workspace.cwd)
+      } catch (error) {
+        return { live: null, liveError: error.message }
+      }
+    }
 
     await ctx.skill.transform((editor) => {
       editor.add({
@@ -133,21 +142,27 @@ export default Plugin.define({
       editor.add({
         name: "harnesses",
         description:
-          "List Switchboard harnesses and check executable availability on the host or in the configured Dungeon guest. Guest discovery requires an already Ready approved environment. Use this before delegation when availability is uncertain.",
+          "List Switchboard harnesses and check executable availability on the host or in the configured Dungeon guest. Set includeModels to discover current Antigravity model IDs via agy models and configured model roles, without starting an inference task. Guest discovery requires an already Ready approved environment.",
         input: {
           type: "object",
-          properties: {},
+          properties: {
+            includeModels: {
+              type: "boolean",
+              description: "Include configured roles and a bounded live model listing for available harnesses. Defaults to false. Live listing is currently supported only for Antigravity; successful listings are cached for five minutes. Does not verify quota or resolved model/effort.",
+            },
+          },
           additionalProperties: false,
         },
         options: { namespace: "switchboard", codemode: true },
-        execute: async (_input, context) => {
+        execute: async (input, context) => {
           await context.progress({ status: "Checking external coding harnesses" })
           const rows = []
           for (const definition of harnessDefinitions(options)) {
             const row = { ...definition, available: false }
             let release
+            let harness
             try {
-              const harness = getHarness(definition.id, options)
+              harness = getHarness(definition.id, options)
               if (harness.profile?.type !== "dungeon") row.available = Boolean(await findExecutable(harness.transport === "acp" ? harness.acpCommand : harness.command))
               else {
                 const session = await ctx.session.get({ sessionID: context.sessionID })
@@ -163,6 +178,9 @@ export default Plugin.define({
               }
             } catch (error) { row.error = error.message }
             finally { release?.() }
+            if (input.includeModels && row.available) {
+              row.models = { roles: harness.models, ...await liveModels(harness, context) }
+            }
             rows.push(row)
           }
           return jsonContent({ platform: process.platform, harnesses: rows })
@@ -202,12 +220,12 @@ export default Plugin.define({
             model: {
               type: "string",
               minLength: 1,
-              description: "Optional configured role name from harnesses.<id>.models or raw harness-native model ID. A role expands to its configured model and effort. Omitted uses the harness's configured `default` role when present, otherwise the vendor default.",
+              description: "Optional configured role name from harnesses.<id>.models or raw harness-native model ID. Discover current Antigravity IDs with harnesses({ includeModels: true }). A role expands to its configured model and effort. Omitted uses the harness's configured `default` role when present, otherwise the vendor default.",
             },
             effort: {
               type: "string",
               minLength: 1,
-              description: "Optional Antigravity or Claude native reasoning effort: low, medium, high, xhigh, max. Overrides a role's configured effort. Unsupported harnesses reject it.",
+              description: "Optional Antigravity or Claude native reasoning effort: low, medium, high, xhigh, max. Use only tiers supported by the selected model; for tiered Antigravity IDs, match the ID's suffix unless explicitly overriding. Overrides a role's configured effort. Unsupported harnesses reject it.",
             },
             timeoutSeconds: {
               type: "integer",
@@ -251,22 +269,25 @@ export default Plugin.define({
             })
           }
 
-          if (options.validateModels && resolved.model !== undefined && harness.modelListArgs) {
-            const listing = await catalog.live(harness, context)
+          let workspace
+          try {
+            workspace = await resolveWorkspace(await ctx.session.get({ sessionID: context.sessionID }), input.workingDirectory)
+          } catch (error) {
+            return failure(harness.id, error.message, { ...profile, ...selection })
+          }
+          if (!useACP && options.validateModels && resolved.model !== undefined && harness.modelListArgs) {
+            const listing = await liveModels(harness, context, workspace)
             const invalid = modelValidationError(harness.id, resolved, listing.live, harness.models)
             if (invalid) return failure(harness.id, invalid, { ...profile, ...selection })
             if (listing.liveError) selection.warnings = [`model availability not validated: ${listing.liveError}`]
           }
 
-          let workspace
           let invocation
           let prompt
           let launchCommand = executable
           let launchArgs
           let binding
           try {
-            const session = await ctx.session.get({ sessionID: context.sessionID })
-            workspace = await resolveWorkspace(session, input.workingDirectory)
             const requestedMode = input.mode ?? "edit"
             prompt = buildWorkerPrompt(input.prompt, requestedMode)
             if (useACP) {
